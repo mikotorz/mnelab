@@ -1504,6 +1504,8 @@ class MainWindow(QMainWindow):
             self.model.set_montage(**step.params)
         elif step.kind == "bads":
             self.model.set_channel_properties(**step.params)
+        elif step.kind == "rename":
+            self.model.rename_channels(**step.params)
         elif step.kind == "filter":
             self.model.filter(**step.params)
         elif step.kind == "resample":
