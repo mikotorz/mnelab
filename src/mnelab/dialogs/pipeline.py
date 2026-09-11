@@ -68,6 +68,8 @@ class PipelineDialog(QDialog):
         self._current_montage = model.current["montage"]
         self._times = data.times if self._dtype == "raw" else None
         self._annot = bool(data.annotations) if self._dtype == "raw" else False
+        self._events = model.current["events"]
+        self._event_mapping = model.current["event_mapping"]
 
         self.steps: list[PipelineStep] = []
 
@@ -281,7 +283,14 @@ class PipelineDialog(QDialog):
 
     def _add_crop_step(self):
         stop = self._times[-1]
-        dialog = CropDialog(self, 0, stop)
+        dialog = CropDialog(
+            self,
+            0,
+            stop,
+            events=self._events,
+            event_mapping=self._event_mapping,
+            sfreq=self._sfreq,
+        )
         if not dialog.exec():
             return
         start = max(dialog.start, 0) if dialog.start is not None else 0

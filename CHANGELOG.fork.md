@@ -13,6 +13,7 @@ same format and style as `CHANGELOG.md`, but with PR links pointing to this fork
 ### ✨ Added
 - Add a Pipeline action to chain multiple preprocessing steps (Apply Montage, Mark Bad Channels, Filter, Resample, Crop, Events from Annotations, Run ICA) into a single run ([#2](https://github.com/mikotorz/mnelab/pull/2) by [mikotorz](https://github.com/mikotorz))
 - Add Rename Channels as a Pipeline step ([#3](https://github.com/mikotorz/mnelab/pull/3) by [mikotorz](https://github.com/mikotorz))
+- Add a "From Event Range" mode to Crop Data that crops to the first/last occurrence of a selected event type (or all events), with adjustable padding before/after ([#7](https://github.com/mikotorz/mnelab/pull/7) by [mikotorz](https://github.com/mikotorz))
 
 ### 🔧 Fixed
 - Fix Pipeline steps (Apply Montage, Mark Bad Channels, Rename Channels, Run ICA) validating and configuring against the original dataset instead of the state produced by earlier queued steps, which broke natural step orders like Rename Channels → Apply Montage or Filter Data → Run ICA ([#5](https://github.com/mikotorz/mnelab/pull/5) by [mikotorz](https://github.com/mikotorz))
