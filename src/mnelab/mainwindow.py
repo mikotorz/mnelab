@@ -363,6 +363,10 @@ class MainWindow(QMainWindow):
         )
 
         process_menu = self.menuBar().addMenu("&Process")
+        self.all_actions["pipeline"] = process_menu.addAction(
+            QIcon.fromTheme("placeholder"), "&Pipeline...", self.run_pipeline
+        )
+        process_menu.addSeparator()
         self.all_actions["filter"] = process_menu.addAction(
             QIcon.fromTheme("filter-data"), "&Filter Data...", self.filter_data
         )
@@ -1416,8 +1420,6 @@ class MainWindow(QMainWindow):
         dialog = RunICADialog(self, data.info["nchan"], data.info["highpass"], methods)
 
         if dialog.exec():
-            calc = CalcDialog(self, "Calculating ICA", "Calculating ICA...")
-
             method = dialog.method.currentText().lower()
             n_components = dialog.n_components.value()
             exclude_bad_segments = dialog.exclude_bad_segments.isChecked()
@@ -1428,44 +1430,90 @@ class MainWindow(QMainWindow):
             if dialog.ortho.isEnabled():
                 fit_params["ortho"] = dialog.ortho.isChecked()
 
-            ica = mne.preprocessing.ICA(
-                n_components=n_components, method=method, fit_params=fit_params
+            self._fit_ica(method, n_components, fit_params, exclude_bad_segments)
+
+    def _fit_ica(self, method, n_components, fit_params, exclude_bad_segments):
+        """Fit an ICA solution on the current data set.
+
+        Returns
+        -------
+        bool
+            True if the calculation completed, False if it was aborted.
+        """
+        calc = CalcDialog(self, "Calculating ICA", "Calculating ICA...")
+
+        ica = mne.preprocessing.ICA(
+            n_components=n_components, method=method, fit_params=fit_params
+        )
+        history = (
+            "ica = mne.preprocessing.ICA("
+            f"n_components={n_components}, method='{method}'"
+        )
+        if fit_params:
+            history += f", fit_params={fit_params})"
+        else:
+            history += ")"
+        self.model.history.append(history)
+
+        pool = mp.Pool(processes=1)
+
+        def callback(x):
+            QMetaObject.invokeMethod(calc, "accept", Qt.ConnectionType.QueuedConnection)
+
+        res = pool.apply_async(
+            func=ica.fit,
+            args=(self.model.current["data"],),
+            kwds={"reject_by_annotation": exclude_bad_segments},
+            callback=callback,
+        )
+        pool.close()
+
+        if not calc.exec():
+            pool.terminate()
+            print("ICA calculation aborted...")
+            return False
+        else:
+            self.model.current["ica"] = res.get(timeout=1)
+            self.model.current["iclabel"] = None
+            self.model.history.append(
+                f"ica.fit(inst=raw, reject_by_annotation={exclude_bad_segments})"
             )
-            history = (
-                "ica = mne.preprocessing.ICA("
-                f"n_components={n_components}, method='{method}'"
-            )
-            if fit_params:
-                history += f", fit_params={fit_params})"
-            else:
-                history += ")"
-            self.model.history.append(history)
+            self.data_changed()
+            return True
 
-            pool = mp.Pool(processes=1)
+    def run_pipeline(self):
+        """Build and run a preprocessing pipeline on the current data set."""
+        dialog = PipelineDialog(self, self.model)
+        if dialog.exec() and dialog.steps:
+            self.auto_duplicate()
+            for step in dialog.steps:
+                try:
+                    self._run_pipeline_step(step)
+                except Exception as e:
+                    QMessageBox.critical(
+                        self,
+                        "Pipeline step failed",
+                        f"Step '{step.label}' failed: {e}\n\n"
+                        "Earlier steps in the pipeline have already been applied.",
+                    )
+                    break
 
-            def callback(x):
-                QMetaObject.invokeMethod(
-                    calc, "accept", Qt.ConnectionType.QueuedConnection
-                )
-
-            res = pool.apply_async(
-                func=ica.fit,
-                args=(self.model.current["data"],),
-                kwds={"reject_by_annotation": exclude_bad_segments},
-                callback=callback,
-            )
-            pool.close()
-
-            if not calc.exec():
-                pool.terminate()
-                print("ICA calculation aborted...")
-            else:
-                self.model.current["ica"] = res.get(timeout=1)
-                self.model.current["iclabel"] = None
-                self.model.history.append(
-                    f"ica.fit(inst=raw, reject_by_annotation={exclude_bad_segments})"
-                )
-                self.data_changed()
+    def _run_pipeline_step(self, step):
+        """Apply a single configured pipeline step to the current data set."""
+        if step.kind == "montage":
+            self.model.set_montage(**step.params)
+        elif step.kind == "bads":
+            self.model.set_channel_properties(**step.params)
+        elif step.kind == "filter":
+            self.model.filter(**step.params)
+        elif step.kind == "resample":
+            self.model.resample(**step.params)
+        elif step.kind == "crop":
+            self.model.crop(**step.params)
+        elif step.kind == "events_from_annotations":
+            self.model.events_from_annotations()
+        elif step.kind == "run_ica":
+            self._fit_ica(**step.params)
 
     def apply_ica(self):
         """Apply current fitted ICA."""
