@@ -2,6 +2,18 @@
 
 Guidelines for AI coding agents working on this repository.
 
+## Fork notice
+
+This repository, [mikotorz/mnelab](https://github.com/mikotorz/mnelab), is a **fork** of
+[cbrnr/mnelab](https://github.com/cbrnr/mnelab). Keep this in mind while working here:
+
+- Open pull requests against this fork's `main` branch (`mikotorz/mnelab`), not upstream.
+- `CHANGELOG.md` mirrors upstream and should only change when pulling in upstream updates,
+  so it stays conflict-free to merge. Do not add fork-specific entries to it — see
+  [Changelog](#changelog) below for where those go instead.
+- Links you add for fork-specific PRs/issues should point to `mikotorz/mnelab`, not
+  `cbrnr/mnelab`.
+
 ## Project setup
 
 - This project uses [uv](https://docs.astral.sh/uv/) for package and environment management.
@@ -29,10 +41,12 @@ Guidelines for AI coding agents working on this repository.
 
 ## Changelog
 
-Every PR must include an entry in the `[UNRELEASED]` section of [CHANGELOG.md](CHANGELOG.md). Add it under the appropriate subsection (`### ✨ Added`, `### 🔧 Fixed`, `### 🌀 Changed`, or `### 🗑️ Removed`). Follow the existing style: a single sentence starting with a capital letter, followed by the PR link and author in parentheses, e.g.:
+Every PR you open on this fork must include an entry in the `[UNRELEASED]` section of
+[CHANGELOG.fork.md](CHANGELOG.fork.md), **not** `CHANGELOG.md` (see
+[Fork notice](#fork-notice)). Add it under the appropriate subsection (`### ✨ Added`, `### 🔧 Fixed`, `### 🌀 Changed`, or `### 🗑️ Removed`). Follow the existing style: a single sentence starting with a capital letter, followed by the PR link (pointing to `mikotorz/mnelab`) and author in parentheses, e.g.:
 
 ```
-- Add support for XYZ ([#123](https://github.com/cbrnr/mnelab/pull/123) by [Your Name](https://github.com/yourname))
+- Add support for XYZ ([#123](https://github.com/mikotorz/mnelab/pull/123) by [Your Name](https://github.com/yourname))
 ```
 
 ## Commit messages
@@ -54,6 +68,9 @@ Every PR must include an entry in the `[UNRELEASED]` section of [CHANGELOG.md](C
   5. Copy the SVG to `icons/dark/actions` and change the fill attribute to `fill="white"`.
 
 ## Release
+
+This process is inherited from upstream and operates on `CHANGELOG.md` / `pyproject.toml`
+only; it does not touch `CHANGELOG.fork.md`. Do not run it for fork-specific work.
 
 1. Run `uv run tools/release.py prepare X.Y.Z` (with the version to be released). This removes the `.dev0` suffix from the `version` field in `pyproject.toml`, updates the `## [UNRELEASED]` heading in `CHANGELOG.md` with the version and today's date, updates the standalone installer URLs in `README.md` and `docs/quickstart/index.md`, and runs `uv lock`.
 2. Review the resulting changes, then commit and push them.
