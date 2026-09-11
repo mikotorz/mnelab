@@ -24,6 +24,7 @@ from mnelab.dialogs.channel_properties import ChannelPropertiesDialog
 from mnelab.dialogs.crop import CropDialog
 from mnelab.dialogs.filter import FilterDialog
 from mnelab.dialogs.montage import MontageDialog
+from mnelab.dialogs.rename_channels import RenameChannelsDialog
 from mnelab.dialogs.resample import ResampleDialog
 from mnelab.dialogs.run_ica import RunICADialog
 from mnelab.utils import have, natural_sort
@@ -31,6 +32,7 @@ from mnelab.utils import have, natural_sort
 STEP_DEFINITIONS = [
     ("montage", "Apply Montage..."),
     ("bads", "Mark Bad Channels..."),
+    ("rename", "Rename Channels..."),
     ("filter", "Filter Data..."),
     ("resample", "Resample Data..."),
     ("crop", "Crop Data..."),
@@ -140,6 +142,8 @@ class PipelineDialog(QDialog):
             self._add_montage_step()
         elif kind == "bads":
             self._add_bads_step()
+        elif kind == "rename":
+            self._add_rename_step()
         elif kind == "filter":
             self._add_filter_step()
         elif kind == "resample":
@@ -202,6 +206,19 @@ class PipelineDialog(QDialog):
         label = f"Mark Bad Channels: {', '.join(bads) if bads else 'none'}"
         params = {"bads": bads, "names": renamed, "types": types}
         self._append_step(PipelineStep("bads", label, params))
+
+    def _add_rename_step(self):
+        dialog = RenameChannelsDialog(self, self._ch_names)
+        if not dialog.exec():
+            return
+        if dialog.new_names == self._ch_names:
+            return
+        params = {
+            "mapping": dialog.mapping,
+            "history_mapping": dialog.history_mapping,
+        }
+        label = f"Rename Channels: {dialog.history_mapping}"
+        self._append_step(PipelineStep("rename", label, params))
 
     def _add_filter_step(self):
         dialog = FilterDialog(self)

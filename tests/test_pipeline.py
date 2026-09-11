@@ -12,6 +12,7 @@ from mnelab.dialogs.crop import CropDialog
 from mnelab.dialogs.filter import FilterDialog
 from mnelab.dialogs.montage import MontageDialog
 from mnelab.dialogs.pipeline import PipelineDialog, PipelineStep
+from mnelab.dialogs.rename_channels import RenameChannelsDialog
 from mnelab.dialogs.resample import ResampleDialog
 from mnelab.mainwindow import MainWindow
 from mnelab.model import Model
@@ -111,6 +112,40 @@ def test_step_list_management(qtbot, model_with_data):
     dialog._remove_step()
     assert dialog.steps == []
     assert not dialog.run_button.isEnabled()
+
+
+def test_add_rename_step(qtbot, model_with_data, monkeypatch):
+    """Adding a rename step records the selected renaming function."""
+
+    def fake_exec(self):
+        self.method.setCurrentText("Delete characters")
+        self.where.setCurrentText("from beginning")
+        self.slice_num.setValue(1)
+        self.update_preview()
+        return True
+
+    monkeypatch.setattr(RenameChannelsDialog, "exec", fake_exec)
+    dialog = PipelineDialog(None, model_with_data)
+    qtbot.addWidget(dialog)
+
+    dialog._add_rename_step()
+
+    assert len(dialog.steps) == 1
+    step = dialog.steps[0]
+    assert step.kind == "rename"
+    assert step.params["history_mapping"] == "lambda name: name[1:]"
+    assert step.params["mapping"]("EEG") == "EG"
+
+
+def test_add_rename_step_noop_not_added(qtbot, model_with_data, monkeypatch):
+    """A rename step that would not change any channel name is not added."""
+    monkeypatch.setattr(RenameChannelsDialog, "exec", lambda self: True)
+    dialog = PipelineDialog(None, model_with_data)
+    qtbot.addWidget(dialog)
+
+    dialog._add_rename_step()
+
+    assert dialog.steps == []
 
 
 def test_add_filter_step(qtbot, model_with_data, monkeypatch):
@@ -249,6 +284,41 @@ def test_run_pipeline_applies_steps_to_single_duplicated_dataset(
     assert data.times[-1] == pytest.approx(10.0, abs=0.05)
     assert "data.filter(None, 30.0)" in model_with_data.history
     assert "data.crop(0.0, 10.0)" in model_with_data.history
+
+
+def test_run_pipeline_rename_step(qtbot, model_with_data, monkeypatch):
+    """A rename pipeline step renames channels via Model.rename_channels."""
+    view = MainWindow(model_with_data)
+    model_with_data.view = view
+    qtbot.addWidget(view)
+
+    steps = [
+        PipelineStep(
+            "rename",
+            "Rename Channels: lambda name: name[1:]",
+            {
+                "mapping": lambda name: name[1:],
+                "history_mapping": "lambda name: name[1:]",
+            },
+        )
+    ]
+
+    class FakePipelineDialog:
+        def __init__(self, parent, model):
+            self.steps = steps
+
+        def exec(self):
+            return True
+
+    monkeypatch.setattr("mnelab.mainwindow.PipelineDialog", FakePipelineDialog)
+
+    view.run_pipeline()
+
+    assert model_with_data.current["data"].info["ch_names"] == ["EG"]
+    assert (
+        "mne.rename_channels(data.info, lambda name: name[1:])"
+        in model_with_data.history
+    )
 
 
 def test_run_pipeline_stops_after_failing_step(qtbot, model_with_data, monkeypatch):
