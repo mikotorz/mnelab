@@ -116,35 +116,42 @@ def model_with_data(tmp_path):
 
 
 @pytest.mark.parametrize(
-    ("method", "where", "argument", "expected_name", "history_mapping"),
+    ("method", "begin_arg", "end_arg", "expected_name", "history_mapping"),
     [
         (
             "Strip characters",
-            "from beginning",
             "EE",
+            "",
             "G",
-            "lambda name: name.lstrip('EE')",
+            "lambda name: name.lstrip('EE').rstrip('')",
         ),
         (
             "Strip characters",
-            "from end",
+            "",
             "G",
             "EE",
-            "lambda name: name.rstrip('G')",
+            "lambda name: name.lstrip('').rstrip('G')",
         ),
         (
             "Delete characters",
-            "from beginning",
             1,
+            0,
             "EG",
-            "lambda name: name[1:]",
+            "lambda name: name[1:len(name) - 0]",
         ),
         (
             "Delete characters",
-            "from end",
+            0,
             1,
             "EE",
-            "lambda name: name[:-1]",
+            "lambda name: name[0:len(name) - 1]",
+        ),
+        (
+            "Delete characters",
+            1,
+            1,
+            "E",
+            "lambda name: name[1:len(name) - 1]",
         ),
     ],
 )
@@ -152,8 +159,8 @@ def test_rename_channels_history(
     model_with_data,
     qtbot,
     method,
-    where,
-    argument,
+    begin_arg,
+    end_arg,
     expected_name,
     history_mapping,
 ):
@@ -163,11 +170,12 @@ def test_rename_channels_history(
     )
     qtbot.addWidget(dialog)
     dialog.method.setCurrentText(method)
-    dialog.where.setCurrentText(where)
     if method == "Strip characters":
-        dialog.strip_chars.setText(argument)
+        dialog.begin_strip_chars.setText(begin_arg)
+        dialog.end_strip_chars.setText(end_arg)
     else:
-        dialog.slice_num.setValue(argument)
+        dialog.begin_slice_num.setValue(begin_arg)
+        dialog.end_slice_num.setValue(end_arg)
     dialog.update_preview()
 
     assert dialog.new_names == [expected_name]

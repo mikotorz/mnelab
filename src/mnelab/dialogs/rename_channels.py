@@ -33,31 +33,38 @@ class RenameChannelsDialog(QDialog):
         self.method.setCurrentIndex(0)
         self.method.setToolTip("Choose how to remove characters from channel names")
 
-        self.strip_chars = QLineEdit()
-        self.strip_chars.setToolTip("Enter characters to strip from channel names")
-        self.slice_num = FlatDoubleSpinBox()
-        self.slice_num.setMinimum(0)
-        self.slice_num.setDecimals(0)
-        self.slice_num.setToolTip(
-            "Set the number of characters to remove from channel names"
+        self.begin_strip_chars = QLineEdit()
+        self.begin_strip_chars.setToolTip(
+            "Enter characters to strip from the beginning of channel names"
+        )
+        self.begin_slice_num = FlatDoubleSpinBox()
+        self.begin_slice_num.setMinimum(0)
+        self.begin_slice_num.setDecimals(0)
+        self.begin_slice_num.setToolTip(
+            "Set the number of characters to remove from the beginning of channel names"
         )
 
-        self.where = QComboBox()
-        self.where.addItems(["from beginning", "from end"])
-        self.where.setCurrentIndex(0)
-        self.where.setToolTip(
-            "Choose whether to remove characters from the beginning or end of channel "
-            "names"
+        self.end_strip_chars = QLineEdit()
+        self.end_strip_chars.setToolTip(
+            "Enter characters to strip from the end of channel names"
+        )
+        self.end_slice_num = FlatDoubleSpinBox()
+        self.end_slice_num.setMinimum(0)
+        self.end_slice_num.setDecimals(0)
+        self.end_slice_num.setToolTip(
+            "Set the number of characters to remove from the end of channel names"
         )
 
         option_grid = QGridLayout()
         option_grid.setColumnStretch(0, 1)
         option_grid.setColumnStretch(1, 1)
-        option_grid.setColumnStretch(2, 1)
-        option_grid.addWidget(self.method, 0, 0)
-        option_grid.addWidget(self.strip_chars, 0, 1)
-        option_grid.addWidget(self.slice_num, 0, 1)
-        option_grid.addWidget(self.where, 0, 2)
+        option_grid.addWidget(self.method, 0, 0, 1, 2)
+        option_grid.addWidget(QLabel("From beginning"), 1, 0)
+        option_grid.addWidget(self.begin_strip_chars, 1, 1)
+        option_grid.addWidget(self.begin_slice_num, 1, 1)
+        option_grid.addWidget(QLabel("From end"), 2, 0)
+        option_grid.addWidget(self.end_strip_chars, 2, 1)
+        option_grid.addWidget(self.end_slice_num, 2, 1)
 
         self.preview = QTableWidget(len(channels), 2)
         self.preview.setHorizontalHeaderLabels(["Before", "After"])
@@ -92,55 +99,52 @@ class RenameChannelsDialog(QDialog):
 
         self.method.currentTextChanged.connect(self.toggle_input)
         self.method.currentTextChanged.connect(self.update_preview)
-        self.where.currentTextChanged.connect(self.update_preview)
-        self.strip_chars.textEdited.connect(self.update_preview)
-        self.slice_num.valueChanged.connect(self.update_preview)
+        self.begin_strip_chars.textEdited.connect(self.update_preview)
+        self.begin_slice_num.valueChanged.connect(self.update_preview)
+        self.end_strip_chars.textEdited.connect(self.update_preview)
+        self.end_slice_num.valueChanged.connect(self.update_preview)
 
         self.toggle_input()
         self.update_preview()
-        self.setFixedSize(450, 450)
+        self.setFixedSize(450, 480)
         self.setFocus()
 
     @property
     def mapping(self):
         """Return the selected channel renaming function."""
         if self.method.currentText() == "Strip characters":
-            chars = self.strip_chars.text()
-            if self.where.currentText() == "from beginning":
-                return lambda name: name.lstrip(chars)
-            return lambda name: name.rstrip(chars)
+            begin_chars = self.begin_strip_chars.text()
+            end_chars = self.end_strip_chars.text()
+            return lambda name: name.lstrip(begin_chars).rstrip(end_chars)
 
-        num = int(self.slice_num.value())
-        if self.where.currentText() == "from beginning":
-            return lambda name: name[num:]
-        if num > 0:
-            return lambda name: name[:-num]
-        return lambda name: name[:]
+        begin_num = int(self.begin_slice_num.value())
+        end_num = int(self.end_slice_num.value())
+        return lambda name: name[begin_num : len(name) - end_num]
 
     @property
     def history_mapping(self):
         """Return the selected channel renaming function as history code."""
         if self.method.currentText() == "Strip characters":
-            method = (
-                "lstrip" if self.where.currentText() == "from beginning" else "rstrip"
-            )
-            return f"lambda name: name.{method}({self.strip_chars.text()!r})"
+            begin_chars = self.begin_strip_chars.text()
+            end_chars = self.end_strip_chars.text()
+            return f"lambda name: name.lstrip({begin_chars!r}).rstrip({end_chars!r})"
 
-        num = int(self.slice_num.value())
-        if self.where.currentText() == "from beginning":
-            return f"lambda name: name[{num}:]"
-        if num > 0:
-            return f"lambda name: name[:-{num}]"
-        return "lambda name: name[:]"
+        begin_num = int(self.begin_slice_num.value())
+        end_num = int(self.end_slice_num.value())
+        return f"lambda name: name[{begin_num}:len(name) - {end_num}]"
 
     @Slot()
     def toggle_input(self):
         if self.method.currentText() == "Strip characters":
-            self.strip_chars.setVisible(True)
-            self.slice_num.setVisible(False)
+            self.begin_strip_chars.setVisible(True)
+            self.begin_slice_num.setVisible(False)
+            self.end_strip_chars.setVisible(True)
+            self.end_slice_num.setVisible(False)
         elif self.method.currentText() == "Delete characters":
-            self.strip_chars.setVisible(False)
-            self.slice_num.setVisible(True)
+            self.begin_strip_chars.setVisible(False)
+            self.begin_slice_num.setVisible(True)
+            self.end_strip_chars.setVisible(False)
+            self.end_slice_num.setVisible(True)
 
     @Slot()
     def update_preview(self):

@@ -131,8 +131,7 @@ def test_add_rename_step(qtbot, model_with_data, monkeypatch):
 
     def fake_exec(self):
         self.method.setCurrentText("Delete characters")
-        self.where.setCurrentText("from beginning")
-        self.slice_num.setValue(1)
+        self.begin_slice_num.setValue(1)
         self.update_preview()
         return True
 
@@ -145,7 +144,7 @@ def test_add_rename_step(qtbot, model_with_data, monkeypatch):
     assert len(dialog.steps) == 1
     step = dialog.steps[0]
     assert step.kind == "rename"
-    assert step.params["history_mapping"] == "lambda name: name[1:]"
+    assert step.params["history_mapping"] == "lambda name: name[1:len(name) - 0]"
     assert step.params["mapping"]("EEG") == "EG"
 
 
@@ -270,8 +269,7 @@ def test_add_montage_step_after_rename_step(qtbot, model_with_eeg_cz, monkeypatc
 
     def fake_rename_exec(self):
         self.method.setCurrentText("Delete characters")
-        self.where.setCurrentText("from beginning")
-        self.slice_num.setValue(4)  # strips the "EEG " prefix, leaving "Cz"
+        self.begin_slice_num.setValue(4)  # strips the "EEG " prefix, leaving "Cz"
         self.update_preview()
         return True
 
@@ -304,8 +302,7 @@ def test_add_bads_step_after_rename_step(qtbot, model_with_data, monkeypatch):
 
     def fake_rename_exec(self):
         self.method.setCurrentText("Delete characters")
-        self.where.setCurrentText("from beginning")
-        self.slice_num.setValue(1)
+        self.begin_slice_num.setValue(1)
         self.update_preview()
         return True
 
@@ -334,7 +331,8 @@ def test_run_ica_step_uses_effective_highpass(qtbot, model_with_data, monkeypatc
     """A queued filter step's cutoff is reflected in the Run ICA dialog's hint."""
 
     def fake_filter_exec(self):
-        self.highpass_button.setChecked(True)
+        self.upper_check.setChecked(False)
+        self.lower_check.setChecked(True)
         self.lower_edit.setValue(2.0)
         return True
 
