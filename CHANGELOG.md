@@ -3,8 +3,6 @@
 - Add tooltips in many places ([#694](https://github.com/cbrnr/mnelab/pull/694) by [Clemens Brunner](https://github.com/cbrnr))
 - Add History entries for editing events or annotations ([#695](https://github.com/cbrnr/mnelab/issues/695) by [Clemens Brunner](https://github.com/cbrnr))
 - Add a Remove Line Noise action using MNEXTEND ([#697](https://github.com/cbrnr/mnelab/pull/697) by [Clemens Brunner](https://github.com/cbrnr))
-- Add a Pipeline action to chain multiple preprocessing steps (Apply Montage, Mark Bad Channels, Filter, Resample, Crop, Events from Annotations, Run ICA) into a single run ([#2](https://github.com/mikotorz/mnelab/pull/2) by [mikotorz](https://github.com/mikotorz))
-- Add Rename Channels as a Pipeline step ([#3](https://github.com/mikotorz/mnelab/pull/3) by [mikotorz](https://github.com/mikotorz))
 
 ### 🔧 Fixed
 - Apply the selected Number of Components setting when running ICA ([#694](https://github.com/cbrnr/mnelab/pull/694) by [Clemens Brunner](https://github.com/cbrnr))
