@@ -4,14 +4,11 @@
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QButtonGroup,
+    QCheckBox,
     QDialog,
     QDialogButtonBox,
     QGridLayout,
     QGroupBox,
-    QHBoxLayout,
-    QLabel,
-    QRadioButton,
     QVBoxLayout,
 )
 
@@ -24,49 +21,26 @@ class FilterDialog(QDialog):
         self.setWindowTitle("Filter Data")
         vbox = QVBoxLayout(self)
 
-        # filter type
-        filter_type_groupbox = QGroupBox("Filter Type")
-        filter_type_layout = QHBoxLayout()
+        # frequency filter (lowpass/highpass/bandpass, via independent cutoffs)
+        freq_groupbox = QGroupBox("Frequency Filter")
+        freq_grid = QGridLayout()
 
-        # radio buttons
-        self.lowpass_button = QRadioButton("Lowpass")
-        self.lowpass_button.setChecked(True)
-        self.highpass_button = QRadioButton("Highpass")
-        self.bandpass_button = QRadioButton("Bandpass")
-        self.notch_button = QRadioButton("Notch")
-
-        self.filter_group = QButtonGroup(self)
-        self.filter_group.addButton(self.lowpass_button)
-        self.filter_group.addButton(self.highpass_button)
-        self.filter_group.addButton(self.bandpass_button)
-        self.filter_group.addButton(self.notch_button)
-
-        filter_type_layout.addWidget(self.lowpass_button)
-        filter_type_layout.addWidget(self.highpass_button)
-        filter_type_layout.addWidget(self.bandpass_button)
-        filter_type_layout.addWidget(self.notch_button)
-
-        self.filter_group.buttonToggled.connect(self._on_filter_type_changed)
-
-        filter_type_groupbox.setLayout(filter_type_layout)
-        vbox.addWidget(filter_type_groupbox)
-
-        # filter settings
-        filter_settings_groupbox = QGroupBox("Filter Settings")
-        self.grid = QGridLayout()
-        self.lower_label = QLabel("Lower Cutoff Frequency (Hz):")
+        self.lower_check = QCheckBox("Lower Cutoff Frequency (Hz):")
         self.lower_edit = FlatDoubleSpinBox()
         self.lower_edit.setMinimum(0)
         self.lower_edit.setDecimals(2)
         self.lower_edit.setValue(1)
         self.lower_edit.setSingleStep(0.5)
         self.lower_edit.setAlignment(Qt.AlignmentFlag.AlignRight)
+        self.lower_edit.setEnabled(False)
         set_tooltip(
             "Frequencies below this cutoff are attenuated",
-            self.lower_label,
+            self.lower_check,
             self.lower_edit,
         )
-        self.upper_label = QLabel("Upper Cutoff Frequency (Hz):")
+
+        self.upper_check = QCheckBox("Upper Cutoff Frequency (Hz):")
+        self.upper_check.setChecked(True)
         self.upper_edit = FlatDoubleSpinBox()
         self.upper_edit.setMinimum(0)
         self.upper_edit.setDecimals(2)
@@ -75,31 +49,41 @@ class FilterDialog(QDialog):
         self.upper_edit.setAlignment(Qt.AlignmentFlag.AlignRight)
         set_tooltip(
             "Frequencies above this cutoff are attenuated",
-            self.upper_label,
+            self.upper_check,
             self.upper_edit,
         )
-        self.notch_label = QLabel("Notch Frequency (Hz):")
+
+        freq_grid.addWidget(self.lower_check, 0, 0)
+        freq_grid.addWidget(self.lower_edit, 0, 1)
+        freq_grid.addWidget(self.upper_check, 1, 0)
+        freq_grid.addWidget(self.upper_edit, 1, 1)
+
+        freq_groupbox.setLayout(freq_grid)
+        vbox.addWidget(freq_groupbox)
+
+        # notch filter
+        notch_groupbox = QGroupBox("Notch Filter")
+        notch_grid = QGridLayout()
+
+        self.notch_check = QCheckBox("Notch Frequency (Hz):")
         self.notch_edit = FlatDoubleSpinBox()
         self.notch_edit.setMinimum(0)
         self.notch_edit.setDecimals(2)
         self.notch_edit.setValue(50)
         self.notch_edit.setSingleStep(0.5)
         self.notch_edit.setAlignment(Qt.AlignmentFlag.AlignRight)
+        self.notch_edit.setEnabled(False)
         set_tooltip(
             "Frequencies around this value are attenuated",
-            self.notch_label,
+            self.notch_check,
             self.notch_edit,
         )
 
-        self.grid.addWidget(self.lower_label, 0, 0)
-        self.grid.addWidget(self.lower_edit, 0, 1)
-        self.grid.addWidget(self.upper_label, 1, 0)
-        self.grid.addWidget(self.upper_edit, 1, 1)
-        self.grid.addWidget(self.notch_label, 2, 0)
-        self.grid.addWidget(self.notch_edit, 2, 1)
+        notch_grid.addWidget(self.notch_check, 0, 0)
+        notch_grid.addWidget(self.notch_edit, 0, 1)
 
-        filter_settings_groupbox.setLayout(self.grid)
-        vbox.addWidget(filter_settings_groupbox)
+        notch_groupbox.setLayout(notch_grid)
+        vbox.addWidget(notch_groupbox)
 
         # buttons
         self.buttonbox = QDialogButtonBox(
@@ -107,84 +91,51 @@ class FilterDialog(QDialog):
         )
         self.ok_button = self.buttonbox.button(QDialogButtonBox.StandardButton.Ok)
         vbox.addWidget(self.buttonbox)
-        self.ok_button.setEnabled(False)
         self.buttonbox.accepted.connect(self.accept)
         self.buttonbox.rejected.connect(self.reject)
 
+        self.lower_check.toggled.connect(self.lower_edit.setEnabled)
+        self.upper_check.toggled.connect(self.upper_edit.setEnabled)
+        self.notch_check.toggled.connect(self.notch_edit.setEnabled)
+
+        self.lower_check.toggled.connect(self.validate_inputs)
+        self.upper_check.toggled.connect(self.validate_inputs)
+        self.notch_check.toggled.connect(self.validate_inputs)
         self.lower_edit.valueChanged.connect(self.validate_inputs)
         self.upper_edit.valueChanged.connect(self.validate_inputs)
         self.notch_edit.valueChanged.connect(self.validate_inputs)
 
-        self._param_widgets_config = {
-            "lower": (self.lower_label, self.lower_edit),
-            "upper": (self.upper_label, self.upper_edit),
-            "notch": (self.notch_label, self.notch_edit),
-        }
-
-        self._filter_type_config = {
-            self.lowpass_button: {"name": "Lowpass", "widgets": ["upper"]},
-            self.highpass_button: {"name": "Highpass", "widgets": ["lower"]},
-            self.bandpass_button: {"name": "Bandpass", "widgets": ["lower", "upper"]},
-            self.notch_button: {"name": "Notch", "widgets": ["notch"]},
-        }
-
-        self._on_filter_type_changed(self.filter_group.checkedButton(), True)
+        self.validate_inputs()
         vbox.setSizeConstraint(QVBoxLayout.SizeConstraint.SetFixedSize)
         self.setFocus()
 
-    def _on_filter_type_changed(self, button, checked):
-        if not checked:
-            return
-
-        config = self._filter_type_config[button]
-        self.selected_filter_type = config["name"]
-        visible_widget_keys = config["widgets"]
-
-        # hide all parameter widgets first
-        for key in self._param_widgets_config:
-            for widget in self._param_widgets_config[key]:
-                widget.setVisible(False)
-
-        # show only the relevant ones for the selected filter type
-        for key in visible_widget_keys:
-            for widget in self._param_widgets_config[key]:
-                widget.setVisible(True)
-
-        self.validate_inputs()
-
     def validate_inputs(self):
-        is_valid = False
-        if self.selected_filter_type == "Bandpass":
-            is_valid = self.upper_edit.value() > self.lower_edit.value()
-        elif self.selected_filter_type == "Lowpass":
-            is_valid = self.upper_edit.value() > 0
-        elif self.selected_filter_type == "Highpass":
-            is_valid = self.lower_edit.value() > 0
-        elif self.selected_filter_type == "Notch":
-            is_valid = self.notch_edit.value() > 0
+        freq_valid = True
+        if self.lower_check.isChecked() and self.upper_check.isChecked():
+            freq_valid = self.upper_edit.value() > self.lower_edit.value()
+        elif self.lower_check.isChecked():
+            freq_valid = self.lower_edit.value() > 0
+        elif self.upper_check.isChecked():
+            freq_valid = self.upper_edit.value() > 0
 
-        self.ok_button.setEnabled(is_valid)
+        notch_valid = not self.notch_check.isChecked() or self.notch_edit.value() > 0
+
+        any_enabled = (
+            self.lower_check.isChecked()
+            or self.upper_check.isChecked()
+            or self.notch_check.isChecked()
+        )
+
+        self.ok_button.setEnabled(any_enabled and freq_valid and notch_valid)
 
     @property
     def lower(self):
-        return (
-            float(self.lower_edit.value())
-            if self.selected_filter_type in ["Bandpass", "Highpass"]
-            else None
-        )
+        return float(self.lower_edit.value()) if self.lower_check.isChecked() else None
 
     @property
     def upper(self):
-        return (
-            float(self.upper_edit.value())
-            if self.selected_filter_type in ["Bandpass", "Lowpass"]
-            else None
-        )
+        return float(self.upper_edit.value()) if self.upper_check.isChecked() else None
 
     @property
     def notch(self):
-        return (
-            float(self.notch_edit.value())
-            if self.selected_filter_type == "Notch"
-            else None
-        )
+        return float(self.notch_edit.value()) if self.notch_check.isChecked() else None

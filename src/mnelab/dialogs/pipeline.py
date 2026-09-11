@@ -260,14 +260,16 @@ class PipelineDialog(QDialog):
         if not dialog.exec():
             return
         params = {"lower": dialog.lower, "upper": dialog.upper, "notch": dialog.notch}
-        if dialog.notch is not None:
-            label = f"Filter Data: notch {dialog.notch:g} Hz"
-        elif dialog.lower is not None and dialog.upper is not None:
-            label = f"Filter Data: {dialog.lower:g}-{dialog.upper:g} Hz"
+        parts = []
+        if dialog.lower is not None and dialog.upper is not None:
+            parts.append(f"{dialog.lower:g}-{dialog.upper:g} Hz")
         elif dialog.lower is not None:
-            label = f"Filter Data: >{dialog.lower:g} Hz"
-        else:
-            label = f"Filter Data: <{dialog.upper:g} Hz"
+            parts.append(f">{dialog.lower:g} Hz")
+        elif dialog.upper is not None:
+            parts.append(f"<{dialog.upper:g} Hz")
+        if dialog.notch is not None:
+            parts.append(f"notch {dialog.notch:g} Hz")
+        label = f"Filter Data: {', '.join(parts)}"
         self._append_step(PipelineStep("filter", label, params))
 
     def _add_resample_step(self):

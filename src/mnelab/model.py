@@ -737,19 +737,16 @@ class Model:
     @data_changed
     def filter(self, lower=None, upper=None, notch=None):
         """Apply filters to the current data based on provided parameters."""
-        if lower is not None and upper is not None:  # bandpass filter
+        if lower is not None or upper is not None:  # frequency filter
             self.current["data"].filter(lower, upper)
-            self.current["name"] += f" ({lower}-{upper}\u2009Hz)"
+            if lower is not None and upper is not None:  # bandpass filter
+                self.current["name"] += f" ({lower}-{upper}\u2009Hz)"
+            elif lower is not None:  # highpass filter
+                self.current["name"] += f" (>{lower}\u2009Hz)"
+            else:  # lowpass filter
+                self.current["name"] += f" (<{upper}\u2009Hz)"
             self.history.append(f"data.filter({lower}, {upper})")
-        elif lower is not None:  # highpass filter
-            self.current["data"].filter(lower, None)
-            self.current["name"] += f" (>{lower}\u2009Hz)"
-            self.history.append(f"data.filter({lower}, None)")
-        elif upper is not None:  # lowpass filter
-            self.current["data"].filter(None, upper)
-            self.current["name"] += f" (<{upper}\u2009Hz)"
-            self.history.append(f"data.filter(None, {upper})")
-        elif notch is not None:  # notch filter
+        if notch is not None:  # notch filter
             self.current["data"].notch_filter(notch)
             self.current["name"] += f" (notch {notch}\u2009Hz)"
             self.history.append(f"data.notch_filter({notch})")
