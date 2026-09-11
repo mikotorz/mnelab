@@ -133,6 +133,38 @@ class PipelineDialog(QDialog):
             return self._dtype == "raw" and self._annot
         return True
 
+    def _effective_info(self):
+        """Return channel info as it will be once queued steps have run."""
+        info = self._info.copy()
+        for step in self.steps:
+            if step.kind == "rename":
+                mne.rename_channels(info, step.params["mapping"])
+            elif step.kind == "bads":
+                bads = step.params.get("bads")
+                if bads is not None:
+                    info["bads"] = bads
+                names = step.params.get("names")
+                if names:
+                    mne.rename_channels(info, names)
+                types = step.params.get("types")
+                if types:
+                    info.set_channel_types(types)
+        return info
+
+    def _effective_ch_names(self):
+        """Return channel names as they will be once queued steps have run."""
+        return self._effective_info()["ch_names"]
+
+    def _effective_highpass(self):
+        """Return the high-pass cutoff as it will be once queued steps have run."""
+        highpass = self._highpass
+        for step in self.steps:
+            if step.kind == "filter":
+                lower = step.params.get("lower")
+                if lower is not None:
+                    highpass = max(highpass, lower)
+        return highpass
+
     def _add_selected_step(self):
         item = self.available_list.currentItem()
         if item is None or not (item.flags() & Qt.ItemFlag.ItemIsEnabled):
@@ -166,7 +198,7 @@ class PipelineDialog(QDialog):
                 PipelineStep("montage", "Apply Montage: none", {"montage": None})
             )
             return
-        if not set(self._ch_names) & set(montage.montage.ch_names):
+        if not set(self._effective_ch_names()) & set(montage.montage.ch_names):
             QMessageBox.critical(
                 self,
                 "No matching channel names",
@@ -185,7 +217,9 @@ class PipelineDialog(QDialog):
         )
 
     def _add_bads_step(self):
-        dialog = ChannelPropertiesDialog(self, self._info, title="Mark Bad Channels")
+        info = self._effective_info()
+        ch_names = info["ch_names"]
+        dialog = ChannelPropertiesDialog(self, info, title="Mark Bad Channels")
         if not dialog.exec():
             return
         dialog.model.sort(0)
@@ -194,24 +228,25 @@ class PipelineDialog(QDialog):
         types = {}
         for i in range(dialog.model.rowCount()):
             new_label = dialog.model.item(i, 1).data(Qt.ItemDataRole.DisplayRole)
-            old_label = self._ch_names[i]
+            old_label = ch_names[i]
             if new_label != old_label:
                 renamed[old_label] = new_label
             new_type = dialog.model.item(i, 2).data(Qt.ItemDataRole.DisplayRole).lower()
-            old_type = channel_type(self._info, i).lower()
+            old_type = channel_type(info, i).lower()
             if new_type != old_type:
                 types[new_label] = new_type
             if dialog.model.item(i, 3).checkState() == Qt.CheckState.Checked:
-                bads.append(self._ch_names[i])
+                bads.append(ch_names[i])
         label = f"Mark Bad Channels: {', '.join(bads) if bads else 'none'}"
         params = {"bads": bads, "names": renamed, "types": types}
         self._append_step(PipelineStep("bads", label, params))
 
     def _add_rename_step(self):
-        dialog = RenameChannelsDialog(self, self._ch_names)
+        ch_names = self._effective_ch_names()
+        dialog = RenameChannelsDialog(self, ch_names)
         if not dialog.exec():
             return
-        if dialog.new_names == self._ch_names:
+        if dialog.new_names == ch_names:
             return
         params = {
             "mapping": dialog.mapping,
@@ -263,7 +298,7 @@ class PipelineDialog(QDialog):
             methods.insert(0, "Picard")
         if have["scikit-learn"]:
             methods.append("FastICA")
-        dialog = RunICADialog(self, self._nchan, self._highpass, methods)
+        dialog = RunICADialog(self, self._nchan, self._effective_highpass(), methods)
         if not dialog.exec():
             return
         method = dialog.method.currentText().lower()

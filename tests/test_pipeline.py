@@ -56,6 +56,18 @@ def model_with_cz(tmp_path):
     return model
 
 
+@pytest.fixture
+def model_with_eeg_cz(tmp_path):
+    """Model with a single 5-second EDF file with one channel named 'EEG Cz'."""
+    fs = 100
+    signal = np.zeros(5 * fs)
+    path = tmp_path / "eeg_cz.edf"
+    Edf([EdfSignal(signal, sampling_frequency=fs, label="EEG Cz")]).write(path)
+    model = Model()
+    model.load(path)
+    return model
+
+
 def _step_availability(dialog):
     """Map each available-step kind to whether it is currently enabled."""
     available = {}
@@ -251,6 +263,101 @@ def test_add_montage_step_no_match(qtbot, model_with_data, monkeypatch):
 
     assert dialog.steps == []
     assert len(critical_calls) == 1
+
+
+def test_add_montage_step_after_rename_step(qtbot, model_with_eeg_cz, monkeypatch):
+    """A queued rename step is taken into account when validating a montage step."""
+
+    def fake_rename_exec(self):
+        self.method.setCurrentText("Delete characters")
+        self.where.setCurrentText("from beginning")
+        self.slice_num.setValue(4)  # strips the "EEG " prefix, leaving "Cz"
+        self.update_preview()
+        return True
+
+    def fake_montage_exec(self):
+        for i in range(self.montages.count()):
+            if self.montages.item(i).name == "spherical_1020":
+                self.montages.setCurrentRow(i)
+                break
+        self.accept()
+        return True
+
+    monkeypatch.setattr(RenameChannelsDialog, "exec", fake_rename_exec)
+    monkeypatch.setattr(MontageDialog, "exec", fake_montage_exec)
+    dialog = PipelineDialog(None, model_with_eeg_cz)
+    qtbot.addWidget(dialog)
+
+    dialog._add_rename_step()
+    assert [s.kind for s in dialog.steps] == ["rename"]
+
+    # without taking the queued rename step into account, "EEG Cz" would not
+    # match any spherical_1020 channel name and this would be wrongly rejected
+    dialog._add_montage_step()
+
+    assert [s.kind for s in dialog.steps] == ["rename", "montage"]
+    assert dialog.steps[-1].params["montage"].name == "spherical_1020"
+
+
+def test_add_bads_step_after_rename_step(qtbot, model_with_data, monkeypatch):
+    """A queued rename step is reflected in a subsequently configured bads step."""
+
+    def fake_rename_exec(self):
+        self.method.setCurrentText("Delete characters")
+        self.where.setCurrentText("from beginning")
+        self.slice_num.setValue(1)
+        self.update_preview()
+        return True
+
+    monkeypatch.setattr(RenameChannelsDialog, "exec", fake_rename_exec)
+    dialog = PipelineDialog(None, model_with_data)
+    qtbot.addWidget(dialog)
+
+    dialog._add_rename_step()
+    assert dialog.steps[-1].params["mapping"]("EEG") == "EG"
+
+    seen_labels = []
+
+    def fake_bads_exec(self):
+        seen_labels.append(self.model.item(0, 1).data(Qt.ItemDataRole.DisplayRole))
+        return False
+
+    monkeypatch.setattr(
+        "mnelab.dialogs.pipeline.ChannelPropertiesDialog.exec", fake_bads_exec
+    )
+    dialog._add_bads_step()
+
+    assert seen_labels == ["EG"]
+
+
+def test_run_ica_step_uses_effective_highpass(qtbot, model_with_data, monkeypatch):
+    """A queued filter step's cutoff is reflected in the Run ICA dialog's hint."""
+
+    def fake_filter_exec(self):
+        self.highpass_button.setChecked(True)
+        self.lower_edit.setValue(2.0)
+        return True
+
+    monkeypatch.setattr(FilterDialog, "exec", fake_filter_exec)
+
+    recorded = {}
+
+    class FakeRunICADialog:
+        def __init__(self, parent, nchan, highpass, methods):
+            recorded["highpass"] = highpass
+
+        def exec(self):
+            return False
+
+    monkeypatch.setattr("mnelab.dialogs.pipeline.RunICADialog", FakeRunICADialog)
+    dialog = PipelineDialog(None, model_with_data)
+    qtbot.addWidget(dialog)
+    assert dialog._effective_highpass() == 0
+
+    dialog._add_filter_step()
+    dialog._add_run_ica_step()
+
+    assert recorded["highpass"] == pytest.approx(2.0)
 
 
 def test_run_pipeline_applies_steps_to_single_duplicated_dataset(
