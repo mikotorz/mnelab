@@ -4,10 +4,17 @@ Guidelines for AI coding agents working on this repository.
 
 ## Fork notice
 
-This repository, [mikotorz/mnelab](https://github.com/mikotorz/mnelab), is a **fork** of
-[cbrnr/mnelab](https://github.com/cbrnr/mnelab). Keep this in mind while working here:
+This repository, [mikotorz/mnelab](https://github.com/mikotorz/mnelab), is a **personal-only
+fork** of [cbrnr/mnelab](https://github.com/cbrnr/mnelab). There is no intent to push or merge
+anything back to that upstream. Keep this in mind while working here:
 
-- Open pull requests against this fork's `main` branch (`mikotorz/mnelab`), not upstream.
+- `main` is a pure mirror of `cbrnr/mnelab`'s `main`, kept in sync only by fetching and
+  fast-forwarding from the `upstream` remote. Never commit or open a PR directly against it.
+- All day-to-day work happens on `M-dev`, the long-lived working branch:
+  - Small, low-risk changes can be committed directly to `M-dev`.
+  - Larger or riskier features should use a short-lived topic branch off `M-dev`, merged via a
+    PR opened on `mikotorz/mnelab` **targeting `M-dev`** (never `main`, never upstream) — this
+    still gets CI and code-review tooling without touching `cbrnr/mnelab`.
 - `CHANGELOG.md` mirrors upstream and should only change when pulling in upstream updates,
   so it stays conflict-free to merge. Do not add fork-specific entries to it — see
   [Changelog](#changelog) below for where those go instead.
