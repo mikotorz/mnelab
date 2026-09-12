@@ -19,7 +19,9 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QMessageBox,
     QPushButton,
+    QTabWidget,
     QVBoxLayout,
+    QWidget,
 )
 
 from mnelab.dialogs.channel_properties import ChannelPropertiesDialog
@@ -45,8 +47,8 @@ class StepSpec:
     """Everything the pipeline dialog and executor need to know about a step kind."""
 
     label: str
-    available: Callable[["PipelineDialog"], bool]
-    add: Callable[["PipelineDialog"], None]
+    available: Callable[["_PipelineStageWidget"], bool]
+    add: Callable[["_PipelineStageWidget"], None]
     run: Callable[["MainWindow"], None]  # noqa: F821
     to_preset: Callable[[dict], dict] = _identity_preset
     from_preset: Callable[[dict], dict] = _identity_preset
@@ -59,6 +61,27 @@ class PipelineStep:
     kind: str
     label: str
     params: dict = field(default_factory=dict)
+
+
+@dataclass
+class StageContext:
+    """The state a pipeline stage starts from.
+
+    This is the model's original state for the first stage, or the state produced
+    by every step queued in the previous stage for any later one.
+    """
+
+    data: object
+    info: object
+    dtype: str
+    sfreq: float
+    nchan: int
+    highpass: float
+    montage: object
+    times: object
+    annot: bool
+    events: object
+    event_mapping: dict
 
 
 def _run_montage_step(view, params):
@@ -122,31 +145,21 @@ def _reject_fields_to_dict(fields):
     return result
 
 
-class PipelineDialog(QDialog):
-    """Build an ordered sequence of preprocessing steps to run in one go."""
+class _PipelineStageWidget(QWidget):
+    """One stage of a preprocessing pipeline: an Available/Steps two-list editor.
 
-    def __init__(self, parent, model):
-        super().__init__(parent)
-        self.setWindowTitle("Preprocessing Pipeline")
-        self.resize(560, 420)
+    A stage starts from a `StageContext` describing the state produced by every
+    earlier stage (or the model's actual current state, for the first stage), and
+    offers/records steps against that state rather than the model's original one.
+    """
 
-        data = model.current["data"]
-        self._data = data
-        self._info = data.info
-        self._ch_names = data.info["ch_names"]
-        self._dtype = model.current["dtype"]
-        self._sfreq = data.info["sfreq"]
-        self._nchan = data.info["nchan"]
-        self._highpass = data.info["highpass"]
-        self._current_montage = model.current["montage"]
-        self._times = data.times if self._dtype == "raw" else None
-        self._annot = bool(data.annotations) if self._dtype == "raw" else False
-        self._events = model.current["events"]
-        self._event_mapping = model.current["event_mapping"]
-
+    def __init__(self, parent_dialog, context):
+        super().__init__(parent_dialog)
+        self._parent_dialog = parent_dialog
+        self._context = context
         self.steps: list[PipelineStep] = []
 
-        hbox = QHBoxLayout()
+        hbox = QHBoxLayout(self)
 
         available_vbox = QVBoxLayout()
         available_vbox.addWidget(QLabel("Available Steps"))
@@ -165,7 +178,7 @@ class PipelineDialog(QDialog):
         hbox.addLayout(available_vbox)
 
         steps_vbox = QVBoxLayout()
-        steps_vbox.addWidget(QLabel("Pipeline Steps"))
+        steps_vbox.addWidget(QLabel("Stage Steps"))
         self.steps_list = QListWidget()
         self.steps_list.setSelectionMode(
             QAbstractItemView.SelectionMode.SingleSelection
@@ -184,26 +197,40 @@ class PipelineDialog(QDialog):
         steps_vbox.addLayout(buttons_hbox)
         hbox.addLayout(steps_vbox)
 
-        vbox = QVBoxLayout(self)
-        vbox.addLayout(hbox)
+    def set_context(self, context):
+        """Update the state this stage starts from (an earlier stage changed)."""
+        self._context = context
+        self._refresh_available_list()
 
-        self.buttonbox = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+    def ending_context(self):
+        """Return the state produced once this stage's queued steps have run."""
+        montage = self._context.montage
+        sfreq = self._context.sfreq
+        for step in self.steps:
+            if step.kind == "montage":
+                montage = step.params.get("montage")
+            elif step.kind == "resample":
+                sfreq = step.params["sfreq"]
+        info = self._effective_info()
+        return StageContext(
+            data=self._context.data,
+            info=info,
+            dtype=self._effective_dtype(),
+            sfreq=sfreq,
+            nchan=info["nchan"],
+            highpass=self._effective_highpass(),
+            montage=montage,
+            times=self._context.times,
+            annot=self._context.annot,
+            events=self._effective_events(),
+            event_mapping=self._context.event_mapping,
         )
-        self.run_button = self.buttonbox.button(QDialogButtonBox.StandardButton.Ok)
-        self.run_button.setText("Run")
-        self.run_button.setEnabled(False)
-        self.buttonbox.accepted.connect(self.accept)
-        self.buttonbox.rejected.connect(self.reject)
-        vbox.addWidget(self.buttonbox)
-
-        self.setFocus()
 
     # -- effective state (reflects steps already queued, not yet applied) ----------
 
     def _effective_info(self):
         """Return channel info as it will be once queued steps have run."""
-        info = self._info.copy()
+        info = self._context.info.copy()
         for step in self.steps:
             if step.kind == "rename":
                 mne.rename_channels(info, step.params["mapping"])
@@ -225,7 +252,7 @@ class PipelineDialog(QDialog):
 
     def _effective_highpass(self):
         """Return the high-pass cutoff as it will be once queued steps have run."""
-        highpass = self._highpass
+        highpass = self._context.highpass
         for step in self.steps:
             if step.kind == "filter":
                 lower = step.params.get("lower")
@@ -238,20 +265,31 @@ class PipelineDialog(QDialog):
         have run."""
         if any(step.kind == "epoch_data" for step in self.steps):
             return "epochs"
-        return self._dtype
+        return self._context.dtype
+
+    def _effective_events(self):
+        """Return the events array as it will be once queued steps have run."""
+        events = self._context.events
+        if (events is None or not len(events)) and any(
+            step.kind == "events_from_annotations" for step in self.steps
+        ):
+            try:
+                events, _ = mne.events_from_annotations(self._context.data)
+            except ValueError:
+                # e.g. every annotation is a "bad"/"edge" marker MNE excludes by
+                # default, so there would be no events to convert
+                events = None
+        return events
 
     def _effective_has_events(self):
         """Return whether events will be available once queued steps have run."""
-        if self._events is not None and len(self._events):
-            return True
-        return any(step.kind == "events_from_annotations" for step in self.steps)
+        events = self._effective_events()
+        return events is not None and len(events) > 0
 
     def _effective_event_types(self):
         """Return the event type labels available once queued steps have run."""
-        if self._events is not None and len(self._events):
-            return np.unique(self._events[:, 2]).astype(str).tolist()
-        if any(step.kind == "events_from_annotations" for step in self.steps):
-            events, _ = mne.events_from_annotations(self._data)
+        events = self._effective_events()
+        if events is not None and len(events):
             return np.unique(events[:, 2]).astype(str).tolist()
         return []
 
@@ -265,7 +303,7 @@ class PipelineDialog(QDialog):
         for step in reversed(self.steps):
             if step.kind == "montage":
                 return step.params.get("montage") is not None
-        return bool(count_locations(self._info) > 0)
+        return bool(count_locations(self._context.info) > 0)
 
     # -- availability ---------------------------------------------------------------
 
@@ -297,7 +335,7 @@ class PipelineDialog(QDialog):
         return self._effective_dtype() == "raw"
 
     def _available_events_from_annotations(self):
-        return self._effective_dtype() == "raw" and self._annot
+        return self._effective_dtype() == "raw" and self._context.annot
 
     def _available_epoch_data(self):
         return self._effective_dtype() == "raw" and self._effective_has_events()
@@ -319,7 +357,7 @@ class PipelineDialog(QDialog):
             else:
                 item.setFlags(flags & ~Qt.ItemFlag.ItemIsEnabled)
 
-    # -- adding steps -----------------------------------------------------------
+    # -- adding steps -------------------------------------------------------------
 
     def _add_selected_step(self):
         item = self.available_list.currentItem()
@@ -330,7 +368,7 @@ class PipelineDialog(QDialog):
 
     def _add_montage_step(self):
         montages = natural_sort(mne.channels.get_builtin_montages())
-        dialog = MontageDialog(self, montages, current_montage=self._current_montage)
+        dialog = MontageDialog(self, montages, current_montage=self._context.montage)
         if not dialog.exec():
             return
         montage = dialog.montage
@@ -427,7 +465,7 @@ class PipelineDialog(QDialog):
         self._append_step(PipelineStep("reference", label, {"add": add, "ref": ref}))
 
     def _add_remove_line_noise_step(self):
-        dialog = RemoveLineNoiseDialog(self, self._sfreq)
+        dialog = RemoveLineNoiseDialog(self, self._context.sfreq)
         if not dialog.exec():
             return
         params = {
@@ -455,21 +493,21 @@ class PipelineDialog(QDialog):
         self._append_step(PipelineStep("filter", label, params))
 
     def _add_resample_step(self):
-        dialog = ResampleDialog(self, self._sfreq)
+        dialog = ResampleDialog(self, self._context.sfreq)
         if not dialog.exec():
             return
         label = f"Resample Data: {dialog.new_sfreq:g} Hz"
         self._append_step(PipelineStep("resample", label, {"sfreq": dialog.new_sfreq}))
 
     def _add_crop_step(self):
-        stop = self._times[-1]
+        stop = self._context.times[-1]
         dialog = CropDialog(
             self,
             0,
             stop,
-            events=self._events,
-            event_mapping=self._event_mapping,
-            sfreq=self._sfreq,
+            events=self._context.events,
+            event_mapping=self._context.event_mapping,
+            sfreq=self._context.sfreq,
         )
         if not dialog.exec():
             return
@@ -532,7 +570,9 @@ class PipelineDialog(QDialog):
             methods.insert(0, "Picard")
         if have["scikit-learn"]:
             methods.append("FastICA")
-        dialog = RunICADialog(self, self._nchan, self._effective_highpass(), methods)
+        dialog = RunICADialog(
+            self, self._context.nchan, self._effective_highpass(), methods
+        )
         if not dialog.exec():
             return
         method = dialog.method.currentText().lower()
@@ -557,8 +597,8 @@ class PipelineDialog(QDialog):
     def _append_step(self, step):
         self.steps.append(step)
         self.steps_list.addItem(QListWidgetItem(step.label))
-        self.run_button.setEnabled(True)
         self._refresh_available_list()
+        self._parent_dialog._on_stage_changed(self)
 
     def _move_step_up(self):
         row = self.steps_list.currentRow()
@@ -566,6 +606,7 @@ class PipelineDialog(QDialog):
             return
         self.steps[row - 1], self.steps[row] = self.steps[row], self.steps[row - 1]
         self._refresh_steps_list(selected_row=row - 1)
+        self._parent_dialog._on_stage_changed(self)
 
     def _move_step_down(self):
         row = self.steps_list.currentRow()
@@ -573,6 +614,7 @@ class PipelineDialog(QDialog):
             return
         self.steps[row + 1], self.steps[row] = self.steps[row], self.steps[row + 1]
         self._refresh_steps_list(selected_row=row + 1)
+        self._parent_dialog._on_stage_changed(self)
 
     def _remove_step(self):
         row = self.steps_list.currentRow()
@@ -580,8 +622,8 @@ class PipelineDialog(QDialog):
             return
         del self.steps[row]
         self._refresh_steps_list()
-        self.run_button.setEnabled(bool(self.steps))
         self._refresh_available_list()
+        self._parent_dialog._on_stage_changed(self)
 
     def _refresh_steps_list(self, selected_row=None):
         self.steps_list.clear()
@@ -591,83 +633,193 @@ class PipelineDialog(QDialog):
             self.steps_list.setCurrentRow(selected_row)
 
 
+class PipelineDialog(QDialog):
+    """Build an ordered, possibly multi-stage sequence of preprocessing steps to run
+    in one go.
+
+    Each stage is its own Available/Steps editor. A stage's Available Steps reflect
+    the state produced by every earlier stage -- most importantly, once a stage
+    queues a Create Epochs step, every later stage starts from an epochs data type
+    instead of raw, which changes which steps are offered.
+    """
+
+    def __init__(self, parent, model):
+        super().__init__(parent)
+        self.setWindowTitle("Preprocessing Pipeline")
+        self.resize(640, 460)
+
+        data = model.current["data"]
+        dtype = model.current["dtype"]
+        self._initial_context = StageContext(
+            data=data,
+            info=data.info,
+            dtype=dtype,
+            sfreq=data.info["sfreq"],
+            nchan=data.info["nchan"],
+            highpass=data.info["highpass"],
+            montage=model.current["montage"],
+            times=data.times if dtype == "raw" else None,
+            annot=bool(data.annotations) if dtype == "raw" else False,
+            events=model.current["events"],
+            event_mapping=model.current["event_mapping"],
+        )
+
+        self.stages: list[_PipelineStageWidget] = []
+
+        vbox = QVBoxLayout(self)
+        self.tabs = QTabWidget()
+        vbox.addWidget(self.tabs)
+
+        stage_controls = QHBoxLayout()
+        self.add_stage_button = QPushButton("+ Add Stage")
+        self.add_stage_button.setToolTip(
+            "Add a stage for steps that must run after this stage's, e.g. once raw"
+            " data has been turned into epochs"
+        )
+        self.add_stage_button.clicked.connect(self._add_stage)
+        self.remove_stage_button = QPushButton("Remove Stage")
+        self.remove_stage_button.clicked.connect(self._remove_stage)
+        stage_controls.addWidget(self.add_stage_button)
+        stage_controls.addWidget(self.remove_stage_button)
+        stage_controls.addStretch()
+        vbox.addLayout(stage_controls)
+
+        self.buttonbox = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        self.run_button = self.buttonbox.button(QDialogButtonBox.StandardButton.Ok)
+        self.run_button.setText("Run")
+        self.run_button.setEnabled(False)
+        self.buttonbox.accepted.connect(self.accept)
+        self.buttonbox.rejected.connect(self.reject)
+        vbox.addWidget(self.buttonbox)
+
+        self._add_stage()
+        self.setFocus()
+
+    @property
+    def steps(self):
+        """Every queued step across all stages, in order. Read-only: stages are the
+        source of truth, this is a flattened view for the executor."""
+        return [step for stage in self.stages for step in stage.steps]
+
+    def _add_stage(self):
+        context = (
+            self.stages[-1].ending_context() if self.stages else self._initial_context
+        )
+        stage = _PipelineStageWidget(self, context)
+        self.stages.append(stage)
+        index = self.tabs.addTab(stage, f"Stage {len(self.stages)}")
+        self.tabs.setCurrentIndex(index)
+        self.remove_stage_button.setEnabled(len(self.stages) > 1)
+        self.run_button.setEnabled(bool(self.steps))
+
+    def _remove_stage(self):
+        if len(self.stages) <= 1:
+            return
+        index = self.tabs.currentIndex()
+        self.tabs.removeTab(index)
+        del self.stages[index]
+        for i in range(self.tabs.count()):
+            self.tabs.setTabText(i, f"Stage {i + 1}")
+        self.remove_stage_button.setEnabled(len(self.stages) > 1)
+        self._resync_contexts_from(index)
+        self.run_button.setEnabled(bool(self.steps))
+
+    def _on_stage_changed(self, stage):
+        """Called by a stage widget whenever its queued steps change."""
+        self._resync_contexts_from(self.stages.index(stage))
+        self.run_button.setEnabled(bool(self.steps))
+
+    def _resync_contexts_from(self, index):
+        """Recompute the starting context of stage `index` and every later stage."""
+        context = (
+            self.stages[index - 1].ending_context()
+            if index > 0
+            else self._initial_context
+        )
+        for stage in self.stages[index:]:
+            stage.set_context(context)
+            context = stage.ending_context()
+
+
 STEP_REGISTRY: dict[str, StepSpec] = {
     "montage": StepSpec(
         "Apply Montage...",
-        PipelineDialog._available_montage,
-        PipelineDialog._add_montage_step,
+        _PipelineStageWidget._available_montage,
+        _PipelineStageWidget._add_montage_step,
         _run_montage_step,
     ),
     "bads": StepSpec(
         "Mark Bad Channels...",
-        PipelineDialog._available_bads,
-        PipelineDialog._add_bads_step,
+        _PipelineStageWidget._available_bads,
+        _PipelineStageWidget._add_bads_step,
         _run_bads_step,
     ),
     "interpolate_bads": StepSpec(
         "Interpolate Bad Channels",
-        PipelineDialog._available_interpolate_bads,
-        PipelineDialog._add_interpolate_bads_step,
+        _PipelineStageWidget._available_interpolate_bads,
+        _PipelineStageWidget._add_interpolate_bads_step,
         _run_interpolate_bads_step,
     ),
     "rename": StepSpec(
         "Rename Channels...",
-        PipelineDialog._available_rename,
-        PipelineDialog._add_rename_step,
+        _PipelineStageWidget._available_rename,
+        _PipelineStageWidget._add_rename_step,
         _run_rename_step,
     ),
     "reference": StepSpec(
         "Change Reference...",
-        PipelineDialog._available_reference,
-        PipelineDialog._add_reference_step,
+        _PipelineStageWidget._available_reference,
+        _PipelineStageWidget._add_reference_step,
         _run_reference_step,
     ),
     "remove_line_noise": StepSpec(
         "Remove Line Noise...",
-        PipelineDialog._available_remove_line_noise,
-        PipelineDialog._add_remove_line_noise_step,
+        _PipelineStageWidget._available_remove_line_noise,
+        _PipelineStageWidget._add_remove_line_noise_step,
         _run_remove_line_noise_step,
     ),
     "filter": StepSpec(
         "Filter Data...",
-        PipelineDialog._available_filter,
-        PipelineDialog._add_filter_step,
+        _PipelineStageWidget._available_filter,
+        _PipelineStageWidget._add_filter_step,
         _run_filter_step,
     ),
     "resample": StepSpec(
         "Resample Data...",
-        PipelineDialog._available_resample,
-        PipelineDialog._add_resample_step,
+        _PipelineStageWidget._available_resample,
+        _PipelineStageWidget._add_resample_step,
         _run_resample_step,
     ),
     "crop": StepSpec(
         "Crop Data...",
-        PipelineDialog._available_crop,
-        PipelineDialog._add_crop_step,
+        _PipelineStageWidget._available_crop,
+        _PipelineStageWidget._add_crop_step,
         _run_crop_step,
     ),
     "events_from_annotations": StepSpec(
         "Events from Annotations",
-        PipelineDialog._available_events_from_annotations,
-        PipelineDialog._add_events_from_annotations_step,
+        _PipelineStageWidget._available_events_from_annotations,
+        _PipelineStageWidget._add_events_from_annotations_step,
         _run_events_from_annotations_step,
     ),
     "epoch_data": StepSpec(
         "Create Epochs...",
-        PipelineDialog._available_epoch_data,
-        PipelineDialog._add_epoch_data_step,
+        _PipelineStageWidget._available_epoch_data,
+        _PipelineStageWidget._add_epoch_data_step,
         _run_epoch_data_step,
     ),
     "drop_bad_epochs": StepSpec(
         "Drop Bad Epochs...",
-        PipelineDialog._available_drop_bad_epochs,
-        PipelineDialog._add_drop_bad_epochs_step,
+        _PipelineStageWidget._available_drop_bad_epochs,
+        _PipelineStageWidget._add_drop_bad_epochs_step,
         _run_drop_bad_epochs_step,
     ),
     "run_ica": StepSpec(
         "Run ICA...",
-        PipelineDialog._available_run_ica,
-        PipelineDialog._add_run_ica_step,
+        _PipelineStageWidget._available_run_ica,
+        _PipelineStageWidget._add_run_ica_step,
         _run_run_ica_step,
     ),
 }
