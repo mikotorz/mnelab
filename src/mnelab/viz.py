@@ -274,17 +274,25 @@ def plot_evoked(
     for event in events:
         evoked = epochs[event].average(picks=picks)
         if topomap_times:
-            figs.append(
-                evoked.plot_joint(
-                    times=topomap_times,
-                    title=f"Event: {event}",
-                    picks=picks,
-                    ts_args={
-                        "spatial_colors": spatial_colors,
-                        "gfp": gfp,
-                    },
-                )
+            fig = evoked.plot_joint(
+                times=topomap_times,
+                title=f"Event: {event}",
+                picks=picks,
+                ts_args={
+                    "spatial_colors": spatial_colors,
+                    "gfp": gfp,
+                },
             )
+            # freeze the constrained layout MNE computes for the joint figure, and the
+            # colorbar's box aspect, otherwise both get re-solved (and visibly squeezed)
+            # on every redraw triggered by the butterfly plot's interactive topomap
+            # selection
+            for f in fig if isinstance(fig, list) else [fig]:
+                f.set_layout_engine("none")
+                for ax in f.axes:
+                    if ax.get_label() == "<colorbar>":
+                        ax.set_box_aspect(None)
+            figs.append(fig)
         else:
             figs.append(
                 evoked.plot(
