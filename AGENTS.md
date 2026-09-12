@@ -11,10 +11,14 @@ anything back to that upstream. Keep this in mind while working here:
 - `main` is a pure mirror of `cbrnr/mnelab`'s `main`, kept in sync only by fetching and
   fast-forwarding from the `upstream` remote. Never commit or open a PR directly against it.
 - All day-to-day work happens on `M-dev`, the long-lived working branch:
-  - Small, low-risk changes can be committed directly to `M-dev`.
-  - Larger or riskier features should use a short-lived topic branch off `M-dev`, merged via a
-    PR opened on `mikotorz/mnelab` **targeting `M-dev`** (never `main`, never upstream) — this
-    still gets CI and code-review tooling without touching `cbrnr/mnelab`.
+  - Only non-functional changes — README/AGENTS.md/CLAUDE.md edits, comments, typo fixes, and
+    similar changes that don't touch application behavior — can be committed directly to
+    `M-dev`.
+  - Everything else, including small bug fixes and one-line feature tweaks, must go through a
+    short-lived topic branch off `M-dev`, merged via a PR opened on `mikotorz/mnelab`
+    **targeting `M-dev`** (never `main`, never upstream) — this still gets CI and code-review
+    tooling without touching `cbrnr/mnelab`, and gives every `CHANGELOG.fork.md` entry a real,
+    verifiable link instead of a guessed or dangling one.
 - `CHANGELOG.md` mirrors upstream and should only change when pulling in upstream updates,
   so it stays conflict-free to merge. Do not add fork-specific entries to it — see
   [Changelog](#changelog) below for where those go instead.
