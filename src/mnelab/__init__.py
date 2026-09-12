@@ -80,6 +80,7 @@ def main():
     model = Model()
     model.view = MainWindow(model)
     app.mainwindow = model.view
+    model.view.check_crash_recovery()
     if len(sys.argv) > 1:  # open files from command line arguments
         for f in sys.argv[1:]:
             model.view.open_data(f)

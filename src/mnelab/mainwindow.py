@@ -48,7 +48,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from mnelab import IS_DEV_VERSION, __version__
+from mnelab import IS_DEV_VERSION, __version__, project
 from mnelab.dialogs import *
 from mnelab.dialogs.channel_stats import ChannelStats
 from mnelab.model import (
@@ -122,11 +122,13 @@ class MainWindow(QMainWindow):
         # restore settings
         settings = read_settings()
         self.recent = settings["recent"]  # list of recent files
+        self.recent_projects = settings["recent_projects"]  # list of recent projects
         self.resize(settings["size"])
         self.move(settings["pos"])
 
-        # remove None entries from self.recent
+        # remove None entries from self.recent / self.recent_projects
         self.recent = [recent for recent in self.recent if recent is not None]
+        self.recent_projects = [r for r in self.recent_projects if r is not None]
 
         # plot backend
         self.plot_backends = ["Matplotlib"]
@@ -163,6 +165,28 @@ class MainWindow(QMainWindow):
         self.recent_menu.triggered.connect(self._load_recent)
         if not self.recent:
             self.recent_menu.setEnabled(False)
+        file_menu.addSeparator()
+        self.all_actions["open_project"] = file_menu.addAction(
+            QIcon.fromTheme("open-project"),
+            "Open &Project...",
+            self.open_project,
+        )
+        self.recent_projects_menu = file_menu.addMenu(
+            QIcon.fromTheme("open-recent"), "Open Recent Project"
+        )
+        self.recent_projects_menu.aboutToShow.connect(self._update_recent_projects_menu)
+        self.recent_projects_menu.triggered.connect(self._load_recent_project)
+        if not self.recent_projects:
+            self.recent_projects_menu.setEnabled(False)
+        self.all_actions["save_project"] = file_menu.addAction(
+            QIcon.fromTheme("save-project"), "&Save Project", self.save_project
+        )
+        self.all_actions["save_project_as"] = file_menu.addAction(
+            QIcon.fromTheme("save-project"),
+            "Save Project &As...",
+            self.save_project_as,
+        )
+        file_menu.addSeparator()
         self.all_actions["close_file"] = file_menu.addAction(
             QIcon.fromTheme("close-file"),
             "&Close",
@@ -467,6 +491,7 @@ class MainWindow(QMainWindow):
         # actions that are always enabled
         self.always_enabled = [
             "open_file",
+            "open_project",
             "about",
             "about_qt",
             "check_updates",
@@ -566,6 +591,12 @@ class MainWindow(QMainWindow):
             self.all_actions["statusbar"].setChecked(False)
 
         self.setAcceptDrops(True)
+
+        # autosave
+        self.autosave_timer = QTimer(self)
+        self.autosave_timer.timeout.connect(self._autosave_tick)
+        self._apply_autosave_settings()
+
         self.data_changed()
 
     def _excepthook(self, type, value, traceback_):
@@ -1007,6 +1038,186 @@ class MainWindow(QMainWindow):
         if msg == QMessageBox.StandardButton.Yes:
             while len(self.model) > 0:
                 self.model.remove_data()
+
+    def _confirm_discard_unsaved(self, context):
+        """Prompt Save/Discard/Cancel if there are unsaved changes.
+
+        Parameters
+        ----------
+        context : str
+            Short description of the action being guarded (e.g. `"closing"`),
+            used in the prompt text.
+
+        Returns
+        -------
+        bool
+            `True` if it's safe to proceed (nothing to save, changes were
+            saved, or the user chose to discard them), `False` if the caller
+            should abort.
+        """
+        if not (self.model.dirty and len(self.model) > 0):
+            return True
+        box = QMessageBox(self)
+        box.setWindowTitle("Unsaved Changes")
+        box.setText(f"The current session has unsaved changes. Save before {context}?")
+        save_button = box.addButton(QMessageBox.StandardButton.Save)
+        box.addButton(QMessageBox.StandardButton.Discard)
+        box.addButton(QMessageBox.StandardButton.Cancel)
+        box.setDefaultButton(save_button)
+        box.exec()
+        clicked = box.clickedButton()
+        if clicked is box.button(QMessageBox.StandardButton.Discard):
+            return True
+        if clicked is save_button:
+            return self.save_project()
+        return False
+
+    def save_project(self):
+        """Save the current project, prompting for a location if none is set yet."""
+        if self.model.project_path is None:
+            return self.save_project_as()
+        return self._save_project_to(self.model.project_path)
+
+    def save_project_as(self):
+        """Save the current project to a new, user-chosen location."""
+        fname, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save Project As",
+            self._get_last_dir(),
+            "MNELAB Project (*.mnelabproj)",
+        )
+        if not fname:
+            return False
+        self._set_last_dir(fname)
+        if not fname.endswith(".mnelabproj"):
+            fname += ".mnelabproj"
+            if Path(fname).exists():
+                answer = QMessageBox.warning(
+                    self,
+                    "Overwrite File",
+                    f"{Path(fname).name} already exists.\nDo you want to replace it?",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                )
+                if answer != QMessageBox.StandardButton.Yes:
+                    return False
+        return self._save_project_to(fname)
+
+    def _save_project_to(self, fname):
+        """Save the project to `fname`. Return `True` on success, `False` otherwise."""
+        try:
+            self.model.save_project(fname)
+        except OSError as e:
+            QMessageBox.critical(self, "Could not save project", str(e))
+            return False
+        self._add_recent_project(fname)
+        Path(project.RECOVERY_PATH).unlink(missing_ok=True)
+        return True
+
+    def open_project(self, path=None):
+        """Open a project file, replacing or merging into the current session."""
+        if path is None:
+            fname, _ = QFileDialog.getOpenFileName(
+                self,
+                "Open Project",
+                self._get_last_dir(),
+                "MNELAB Project (*.mnelabproj)",
+            )
+            if not fname:
+                return
+        else:
+            fname = path
+        if not Path(fname).is_file():
+            self._remove_recent_project(fname)
+            QMessageBox.critical(
+                self, "File does not exist", f"File {fname} does not exist anymore."
+            )
+            return
+        self._set_last_dir(fname)
+
+        merge = False
+        if self.model.data:
+            if not self._confirm_discard_unsaved(context="opening a project"):
+                return
+            choice = QMessageBox(self)
+            choice.setWindowTitle("Open Project")
+            choice.setText(
+                "A session is already open. Replace the current session with "
+                "the project, or merge the project into it?"
+            )
+            replace_button = choice.addButton(
+                "Replace", QMessageBox.ButtonRole.DestructiveRole
+            )
+            merge_button = choice.addButton("Merge", QMessageBox.ButtonRole.AcceptRole)
+            choice.addButton(QMessageBox.StandardButton.Cancel)
+            choice.exec()
+            clicked = choice.clickedButton()
+            if clicked is merge_button:
+                merge = True
+            elif clicked is not replace_button:
+                return
+
+        try:
+            self.model.load_project(fname, merge=merge)
+        except project.ProjectFormatError as e:
+            QMessageBox.critical(self, "Invalid project file", str(e))
+            return
+        except OSError as e:
+            QMessageBox.critical(self, "Could not open project", str(e))
+            return
+
+        if read_settings("memory_saving") and len(self.model) > 1:
+            for i in range(len(self.model)):
+                if i != self.model.index:
+                    self.model.evict_dataset(i)
+        self._add_recent_project(fname)
+
+    def _apply_autosave_settings(self):
+        """(Re)start or stop the autosave timer according to current settings."""
+        if read_settings("autosave_enabled"):
+            self.autosave_timer.start(read_settings("autosave_interval") * 60_000)
+        else:
+            self.autosave_timer.stop()
+
+    def _autosave_tick(self):
+        """Periodically save the project, or a recovery snapshot, if dirty."""
+        if not self.model.dirty or len(self.model) == 0:
+            return
+        target = self.model.project_path or project.RECOVERY_PATH
+        try:
+            project.save_project(self.model, target)
+        except OSError:
+            # don't interrupt the user with an error dialog from a background timer
+            return
+        if target == self.model.project_path:
+            self.model.dirty = False
+        # else: target was the hidden recovery file -- dirty/project_path stay
+        # untouched, since writing it must never make the session look "saved"
+
+    def check_crash_recovery(self):
+        """Offer to restore an autosaved session left over from a previous run."""
+        if not Path(project.RECOVERY_PATH).is_file():
+            return
+        answer = QMessageBox.question(
+            self,
+            "Recover Unsaved Session",
+            "MNELAB found a session from a previous run that was not saved "
+            "(likely due to a crash or forced quit). Restore it?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if answer == QMessageBox.StandardButton.Yes:
+            try:
+                self.model.load_project(project.RECOVERY_PATH, merge=False)
+            except Exception as e:
+                QMessageBox.critical(self, "Could not restore session", str(e))
+                # leave the recovery file alone -- don't destroy the only copy of
+                # the user's unsaved work over a failed restore
+                return
+            # the recovery file isn't "the user's project" and isn't considered saved
+            self.model.project_path = None
+            self.model.dirty = True
+            Path(project.RECOVERY_PATH).unlink(missing_ok=True)
+        else:
+            Path(project.RECOVERY_PATH).unlink(missing_ok=True)
 
     def xdf_metadata(self, fname=None):
         """Show XDF metadata."""
@@ -1943,35 +2154,65 @@ class MainWindow(QMainWindow):
                 self.model.evict_dataset(parent_index)
             return True
 
-    def _add_recent(self, fname):
-        """Add a file to recent file list.
+    def _add_recent_generic(self, lst, settings_key, menu, fname):
+        """Add `fname` to a recent-items list, mutating `lst` in place.
 
         Parameters
         ----------
+        lst : list of str
+            The recent-items list to update (`self.recent` or
+            `self.recent_projects`), mutated in place.
+        settings_key : str
+            The settings key `lst` is persisted under.
+        menu : PySide6.QtWidgets.QMenu
+            The submenu associated with `lst`.
         fname : str
             File name.
         """
-        if fname in self.recent:  # avoid duplicates
-            self.recent.remove(fname)
-        self.recent.insert(0, fname)
-        self.recent = self.recent[: read_settings("max_recent")]  # prune list
-        write_settings(recent=self.recent)
-        if not self.recent_menu.isEnabled():
-            self.recent_menu.setEnabled(True)
+        if fname in lst:  # avoid duplicates
+            lst.remove(fname)
+        lst.insert(0, fname)
+        del lst[read_settings("max_recent") :]  # prune list
+        write_settings(**{settings_key: lst})
+        if not menu.isEnabled():
+            menu.setEnabled(True)
+
+    def _remove_recent_generic(self, lst, settings_key, menu, fname):
+        """Remove `fname` from a recent-items list, mutating `lst` in place.
+
+        Parameters
+        ----------
+        lst : list of str
+            The recent-items list to update (`self.recent` or
+            `self.recent_projects`), mutated in place.
+        settings_key : str
+            The settings key `lst` is persisted under.
+        menu : PySide6.QtWidgets.QMenu
+            The submenu associated with `lst`.
+        fname : str
+            File name.
+        """
+        if fname in lst:
+            lst.remove(fname)
+            write_settings(**{settings_key: lst})
+            if not lst:
+                menu.setEnabled(False)
+
+    def _add_recent(self, fname):
+        self._add_recent_generic(self.recent, "recent", self.recent_menu, fname)
 
     def _remove_recent(self, fname):
-        """Remove file from recent file list.
+        self._remove_recent_generic(self.recent, "recent", self.recent_menu, fname)
 
-        Parameters
-        ----------
-        fname : str
-            File name.
-        """
-        if fname in self.recent:
-            self.recent.remove(fname)
-            write_settings(recent=self.recent)
-            if not self.recent:
-                self.recent_menu.setEnabled(False)
+    def _add_recent_project(self, fname):
+        self._add_recent_generic(
+            self.recent_projects, "recent_projects", self.recent_projects_menu, fname
+        )
+
+    def _remove_recent_project(self, fname):
+        self._remove_recent_generic(
+            self.recent_projects, "recent_projects", self.recent_projects_menu, fname
+        )
 
     @Slot(QTreeWidgetItem)
     def _update_data(self, item):
@@ -2004,6 +2245,16 @@ class MainWindow(QMainWindow):
     @Slot(QAction)
     def _load_recent(self, action):
         self.open_data(path=action.text())
+
+    @Slot()
+    def _update_recent_projects_menu(self):
+        self.recent_projects_menu.clear()
+        for recent in self.recent_projects:
+            self.recent_projects_menu.addAction(recent)
+
+    @Slot(QAction)
+    def _load_recent_project(self, action):
+        self.open_project(path=action.text())
 
     def _apply_toolbar(self, action_keys):
         for action in list(self.toolbar.actions()):
@@ -2066,6 +2317,14 @@ class MainWindow(QMainWindow):
 
     def event(self, event):
         if event.type() == QEvent.Type.Close:
+            # only prompt for a window that was actually shown to the user -- a
+            # widget closed programmatically (e.g. test teardown) without ever
+            # being shown isn't a real "quit" the user needs to confirm
+            if self.isVisible() and not self._confirm_discard_unsaved(
+                context="closing"
+            ):
+                event.ignore()
+                return True
             sizes = self.splitter.sizes()
             total = sum(sizes)
             kwargs = {"size": self.size(), "pos": self.pos()}
@@ -2076,6 +2335,7 @@ class MainWindow(QMainWindow):
                 print("\n# Command History\n")
                 print(format_code("\n".join(self.model.history)))
             self.model.cleanup()
+            Path(project.RECOVERY_PATH).unlink(missing_ok=True)
             event.accept()
         elif event.type() == QEvent.Type.PaletteChange:
             color_scheme = QApplication.styleHints().colorScheme()
