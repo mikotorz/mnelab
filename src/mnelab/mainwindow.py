@@ -60,6 +60,7 @@ from mnelab.model import (
 from mnelab.settings import SettingsDialog, read_settings, write_settings
 from mnelab.utils import (
     annotations_between_events,
+    count_good_channels,
     count_locations,
     format_code,
     get_annotation_types_from_file,
@@ -1650,7 +1651,8 @@ class MainWindow(QMainWindow):
             methods.append("FastICA")
 
         data = self.model.current["data"]
-        dialog = RunICADialog(self, data.info["nchan"], data.info["highpass"], methods)
+        nchan = count_good_channels(data.info)
+        dialog = RunICADialog(self, nchan, data.info["highpass"], methods)
 
         if dialog.exec():
             method = dialog.method.currentText().lower()

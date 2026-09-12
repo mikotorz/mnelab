@@ -38,7 +38,13 @@ from mnelab.dialogs.remove_line_noise import RemoveLineNoiseDialog
 from mnelab.dialogs.rename_channels import RenameChannelsDialog, build_rename_mapping
 from mnelab.dialogs.resample import ResampleDialog
 from mnelab.dialogs.run_ica import RunICADialog
-from mnelab.utils import Montage, count_locations, have, natural_sort
+from mnelab.utils import (
+    Montage,
+    count_good_channels,
+    count_locations,
+    have,
+    natural_sort,
+)
 
 
 class PipelinePresetFormatError(Exception):
@@ -648,7 +654,10 @@ class _PipelineStageWidget(QWidget):
         if have["scikit-learn"]:
             methods.append("FastICA")
         dialog = RunICADialog(
-            self, self._context.nchan, self._effective_highpass(), methods
+            self,
+            count_good_channels(self._effective_info()),
+            self._effective_highpass(),
+            methods,
         )
         if not dialog.exec():
             return

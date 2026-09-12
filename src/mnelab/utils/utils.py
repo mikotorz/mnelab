@@ -16,6 +16,23 @@ from mne.defaults import _handle_default
 from PySide6.QtGui import QFont
 
 
+def count_good_channels(info):
+    """Return the number of good (non-bad) data channels available for ICA."""
+    return len(
+        mne.pick_types(
+            info,
+            meg=True,
+            eeg=True,
+            csd=True,
+            seeg=True,
+            ecog=True,
+            dbs=True,
+            fnirs=True,
+            exclude="bads",
+        )
+    )
+
+
 def count_locations(info):
     locs = np.array([ch["loc"][:3] for ch in info["chs"]])
     valid_locs = np.any(~np.isclose(locs, 0) & np.isfinite(locs), axis=1)
