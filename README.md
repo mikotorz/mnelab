@@ -20,9 +20,25 @@ Key features include:
 - Plotting functions for raw data, epochs, evoked responses, independent components, ERD/ERS maps, and more.
  
 
+## Fork Notice
+
+This is [mikotorz](https://github.com/mikotorz)'s **personal, unofficial fork** of the official
+[MNELAB project](https://github.com/cbrnr/mnelab). It is not affiliated with, endorsed by, or
+supported by the MNELAB maintainers.
+
+- Many of the changes on top of upstream in this fork are written with AI coding assistance
+  (Claude Code). Review any code here before relying on it.
+- This fork is maintained for personal use on a best-effort basis, with no guarantees of
+  correctness, stability, or support. **Use it at your own risk.**
+- If you need the officially maintained version, use
+  [cbrnr/mnelab](https://github.com/cbrnr/mnelab) instead.
+- `main` mirrors upstream; `M-dev` is where this fork's own development happens. Fork-specific
+  changes are listed in [CHANGELOG.fork.md](CHANGELOG.fork.md).
+
+
 ## Documentation
 
-The [documentation](https://mnelab.readthedocs.io/) contains hands-on examples and tutorials for different use cases. Check out the [changelog](https://github.com/cbrnr/mnelab/blob/main/CHANGELOG.md) to learn what we added, changed, or fixed.
+The [documentation](https://mnelab.readthedocs.io/) contains hands-on examples and tutorials for different use cases. Check out the [changelog](https://github.com/cbrnr/mnelab/blob/main/CHANGELOG.md) (upstream) and [CHANGELOG.fork.md](CHANGELOG.fork.md) (this fork) to learn what was added, changed, or fixed.
 
 
 ## Quick Start
