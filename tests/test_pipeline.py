@@ -234,7 +234,7 @@ def test_add_montage_step_success(qtbot, model_with_cz, monkeypatch):
 
     def fake_exec(self):
         for i in range(self.montages.count()):
-            if self.montages.item(i).name == "spherical_1020":
+            if self.montages.item(i).name == "standard_1020":
                 self.montages.setCurrentRow(i)
                 break
         self.accept()
@@ -249,7 +249,7 @@ def test_add_montage_step_success(qtbot, model_with_cz, monkeypatch):
     assert len(dialog.steps) == 1
     step = dialog.steps[0]
     assert step.kind == "montage"
-    assert step.params["montage"].name == "spherical_1020"
+    assert step.params["montage"].name == "standard_1020"
 
 
 def test_add_montage_step_no_match(qtbot, model_with_data, monkeypatch):
@@ -257,7 +257,7 @@ def test_add_montage_step_no_match(qtbot, model_with_data, monkeypatch):
 
     def fake_exec(self):
         for i in range(self.montages.count()):
-            if self.montages.item(i).name == "spherical_1020":
+            if self.montages.item(i).name == "standard_1020":
                 self.montages.setCurrentRow(i)
                 break
         self.accept()
@@ -289,7 +289,7 @@ def test_add_montage_step_after_rename_step(qtbot, model_with_eeg_cz, monkeypatc
 
     def fake_montage_exec(self):
         for i in range(self.montages.count()):
-            if self.montages.item(i).name == "spherical_1020":
+            if self.montages.item(i).name == "standard_1020":
                 self.montages.setCurrentRow(i)
                 break
         self.accept()
@@ -305,11 +305,11 @@ def test_add_montage_step_after_rename_step(qtbot, model_with_eeg_cz, monkeypatc
     assert [s.kind for s in dialog.steps] == ["rename"]
 
     # without taking the queued rename step into account, "EEG Cz" would not
-    # match any spherical_1020 channel name and this would be wrongly rejected
+    # match any standard_1020 channel name and this would be wrongly rejected
     stage._add_montage_step()
 
     assert [s.kind for s in dialog.steps] == ["rename", "montage"]
-    assert dialog.steps[-1].params["montage"].name == "spherical_1020"
+    assert dialog.steps[-1].params["montage"].name == "standard_1020"
 
 
 def test_add_bads_step_after_rename_step(qtbot, model_with_data, monkeypatch):
@@ -497,7 +497,7 @@ def test_interpolate_bads_availability(qtbot, model_with_cz, monkeypatch):
 
     def fake_montage_exec(self):
         for i in range(self.montages.count()):
-            if self.montages.item(i).name == "spherical_1020":
+            if self.montages.item(i).name == "standard_1020":
                 self.montages.setCurrentRow(i)
                 break
         self.accept()

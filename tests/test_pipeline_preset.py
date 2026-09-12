@@ -46,11 +46,11 @@ def test_round_trip_preset_preserves_stages_and_steps(qtbot, model_with_cz, tmp_
     qtbot.addWidget(dialog)
     stage1 = dialog.stages[0]
 
-    montage = Montage(make_standard_montage("spherical_1020"), "spherical_1020")
+    montage = Montage(make_standard_montage("standard_1020"), "standard_1020")
     stage1._append_step(
         PipelineStep(
             "montage",
-            "Apply Montage: spherical_1020",
+            "Apply Montage: standard_1020",
             {
                 "montage": montage,
                 "match_case": False,
@@ -97,7 +97,7 @@ def test_round_trip_preset_preserves_stages_and_steps(qtbot, model_with_cz, tmp_
     assert kinds == [["montage", "rename", "filter"], ["resample"]]
 
     loaded_montage_step = loaded_stages[0][1][0]
-    assert loaded_montage_step.params["montage"].name == "spherical_1020"
+    assert loaded_montage_step.params["montage"].name == "standard_1020"
     assert loaded_montage_step.params["montage"].embedded is False
     assert loaded_montage_step.params["on_missing"] == "ignore"
 
@@ -137,7 +137,7 @@ def test_save_preset_rejects_embedded_montage(tmp_path):
     """A montage embedded in a specific recording's own digitization cannot be
     generically reconstructed on future data, so saving it is rejected clearly."""
     montage = Montage(
-        make_standard_montage("spherical_1020"), "spherical_1020", None, True
+        make_standard_montage("standard_1020"), "standard_1020", None, True
     )
     stages_data = [
         (
@@ -145,7 +145,7 @@ def test_save_preset_rejects_embedded_montage(tmp_path):
             [
                 PipelineStep(
                     "montage",
-                    "Apply Montage: spherical_1020",
+                    "Apply Montage: standard_1020",
                     {
                         "montage": montage,
                         "match_case": False,

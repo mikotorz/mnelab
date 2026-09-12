@@ -1016,7 +1016,7 @@ wheels = [
 
 [[package]]
 name = "mne"
-version = "1.13.0"
+version = "1.12.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "decorator" },
@@ -1029,9 +1029,9 @@ dependencies = [
     { name = "scipy" },
     { name = "tqdm" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/54/c0/1b625c3dea2194ebe0f7ca2ef3f7b46e631f252fc3cf29af4a495beff418/mne-1.13.0.tar.gz", hash = "sha256:9308523df88bd6fdf6e60af07cdb459eac079c93dbc48032de30653e393e1344", size = 7360722, upload-time = "2026-09-09T17:02:20.999Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/95/72/24cd8137df5a185fe0856ff9b6f8a8f9d387d6783c51961a1c6300a4efe8/mne-1.12.1.tar.gz", hash = "sha256:244f844057f28a4da2509039dba637832ffb65f678ca76fc667312c493b12044", size = 7211821, upload-time = "2026-04-20T17:16:57.295Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/bd/fb/122d771ed77beac13dd38916623b4a635e3537bca48119090588274136ed/mne-1.13.0-py3-none-any.whl", hash = "sha256:dab19b08b8dfe978b23bfe3d77371853609745aa9036eb47006d02e48a2480f6", size = 7666619, upload-time = "2026-09-09T17:02:17.653Z" },
+    { url = "https://files.pythonhosted.org/packages/6c/da/a3280dbd8f0024b287b625ef97f8ef79ae853ed852e7732641d0ec3c2160/mne-1.12.1-py3-none-any.whl", hash = "sha256:7823bd276d570e9bed2e63e8d86fdbe74d5ee7817b6d01a8e4dc9510ef9e3a91", size = 7509566, upload-time = "2026-04-20T17:16:54.447Z" },
 ]
 
 [package.optional-dependencies]
@@ -1105,7 +1105,7 @@ requires-dist = [
     { name = "black", specifier = ">=25.3.1" },
     { name = "isort", specifier = ">=8.0.1" },
     { name = "matplotlib", specifier = ">=3.10.8" },
-    { name = "mne", specifier = ">=1.12.1" },
+    { name = "mne", specifier = ">=1.12.1,<1.13" },
     { name = "mne-qt-browser", marker = "extra == 'full'", specifier = ">=0.7.4" },
     { name = "mnextend", specifier = ">=0.3.0" },
     { name = "numpy", specifier = ">=2.4.4" },

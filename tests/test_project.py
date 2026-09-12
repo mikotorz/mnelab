@@ -44,8 +44,8 @@ def model_with_data(tmp_path):
     path = _make_raw_fif(tmp_path, "sample")
     model.load(path)
 
-    montage = mne.channels.make_standard_montage("colin27_1020")
-    model.set_montage(Montage(montage, "colin27_1020"))
+    montage = mne.channels.make_standard_montage("standard_1020")
+    model.set_montage(Montage(montage, "standard_1020"))
 
     model.current["events"] = np.array([[10, 0, 1], [50, 0, 2]])
     model.current["event_mapping"][1] = "stimulus"
@@ -89,7 +89,7 @@ def test_round_trip_replace(tmp_path, model_with_data):
     np.testing.assert_array_equal(loaded["events"], model.current["events"])
     assert dict(loaded["event_mapping"]) == dict(model.current["event_mapping"])
 
-    assert loaded["montage"].name == "colin27_1020"
+    assert loaded["montage"].name == "standard_1020"
     assert loaded["montage"].embedded is False
     loaded_positions = loaded["montage"].montage.get_positions()
     np.testing.assert_allclose(
