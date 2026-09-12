@@ -4,7 +4,6 @@
 
 import json
 import os
-import shutil
 import tempfile
 import zipfile
 from collections import defaultdict
@@ -13,12 +12,18 @@ from pathlib import Path
 
 import mne
 import numpy as np
+import zstandard as zstd
 from mnextend import write_epochs, write_raw
 from PySide6.QtCore import QStandardPaths
 
 from mnelab.utils import Montage
 
 PROJECT_FORMAT_VERSION = 1
+
+# Zstandard compression level for archive entries. Python's `zipfile` has no native
+# Zstandard support on Python < 3.14, so every entry is stored (ZIP_STORED) at the
+# zip-container level and compressed/decompressed by us instead.
+ZSTD_LEVEL = 9
 
 RECOVERY_PATH = str(
     Path(
@@ -48,6 +53,30 @@ def _dataset_suffix(dtype):
     return "_raw.fif" if dtype == "raw" else "_epo.fif"
 
 
+def _write_compressed(zf, arcname, source_path):
+    """Zstandard-compress `source_path` and store it in `zf` under `arcname`."""
+    zinfo = zipfile.ZipInfo(arcname)
+    zinfo.compress_type = zipfile.ZIP_STORED
+    cctx = zstd.ZstdCompressor(level=ZSTD_LEVEL)
+    with open(source_path, "rb") as src, zf.open(zinfo, "w", force_zip64=True) as dst:
+        cctx.copy_stream(src, dst)
+
+
+def _write_compressed_bytes(zf, arcname, data):
+    """Zstandard-compress `data` (bytes) and store it in `zf` under `arcname`."""
+    zinfo = zipfile.ZipInfo(arcname)
+    zinfo.compress_type = zipfile.ZIP_STORED
+    cctx = zstd.ZstdCompressor(level=ZSTD_LEVEL)
+    zf.writestr(zinfo, cctx.compress(data))
+
+
+def _read_compressed(zf, arcname, dest_path):
+    """Extract and Zstandard-decompress the `zf` entry `arcname` to `dest_path`."""
+    dctx = zstd.ZstdDecompressor()
+    with zf.open(arcname) as src, open(dest_path, "wb") as dst:
+        dctx.copy_stream(src, dst)
+
+
 def save_project(model, fname):
     """Save the entire session held by `model` to a `.mnelabproj` file.
 
@@ -69,7 +98,7 @@ def save_project(model, fname):
     try:
         with (
             tempfile.TemporaryDirectory(prefix="mnelab_proj_build_") as scratch,
-            zipfile.ZipFile(tmp_path, mode="w", compression=zipfile.ZIP_DEFLATED) as zf,
+            zipfile.ZipFile(tmp_path, mode="w", compression=zipfile.ZIP_STORED) as zf,
         ):
             datasets_meta = [
                 _save_dataset(zf, scratch, dataset) for dataset in model.data
@@ -81,7 +110,8 @@ def save_project(model, fname):
                 "history": list(model.history),
                 "datasets": datasets_meta,
             }
-            zf.writestr("project.json", json.dumps(project_json, indent=2))
+            json_bytes = json.dumps(project_json, indent=2).encode("utf-8")
+            _write_compressed_bytes(zf, "project.json", json_bytes)
         os.replace(tmp_path, dest)
     except BaseException:
         Path(tmp_path).unlink(missing_ok=True)
@@ -96,14 +126,14 @@ def _save_dataset(zf, scratch, dataset):
     # reuse an existing eviction-cache fif if one is still valid, regardless of
     # whether the dataset is currently evicted -- cheaper than re-encoding
     if dataset["_cache_path"] is not None:
-        zf.write(dataset["_cache_path"], arcname)
+        _write_compressed(zf, arcname, dataset["_cache_path"])
     elif dataset["data"] is not None:
         scratch_path = str(Path(scratch) / f"{dataset['id']}{suffix}")
         if dataset["dtype"] == "epochs":
             write_epochs(scratch_path, dataset["data"])
         else:
             write_raw(scratch_path, dataset["data"])
-        zf.write(scratch_path, arcname)
+        _write_compressed(zf, arcname, scratch_path)
     else:
         raise RuntimeError(
             f"Dataset {dataset['id']} has no in-memory data and no cache file; "
@@ -115,7 +145,7 @@ def _save_dataset(zf, scratch, dataset):
         ica_scratch_path = str(Path(scratch) / f"{dataset['id']}_ica.fif")
         dataset["ica"].save(ica_scratch_path, overwrite=True)
         ica_arcname = f"data/{dataset['id']}_ica.fif"
-        zf.write(ica_scratch_path, ica_arcname)
+        _write_compressed(zf, ica_arcname, ica_scratch_path)
 
     montage = dataset["montage"]
     montage_meta = (
@@ -180,8 +210,9 @@ def load_project(fname):
 
     with zf:
         try:
-            meta = json.loads(zf.read("project.json"))
-        except (KeyError, json.JSONDecodeError) as e:
+            dctx = zstd.ZstdDecompressor()
+            meta = json.loads(dctx.decompress(zf.read("project.json")))
+        except (KeyError, json.JSONDecodeError, zstd.ZstdError) as e:
             raise ProjectFormatError(
                 f"{fname} is not a valid MNELAB project file."
             ) from e
@@ -213,8 +244,7 @@ def _load_dataset(zf, entry):
     suffix = _dataset_suffix(dtype)
     fd, cache_path = tempfile.mkstemp(suffix=suffix, prefix="mnelab_")
     os.close(fd)
-    with zf.open(entry["data_path"]) as src, open(cache_path, "wb") as dst:
-        shutil.copyfileobj(src, dst)
+    _read_compressed(zf, entry["data_path"], cache_path)
 
     if dtype == "epochs":
         data = mne.read_epochs(cache_path, preload=True)
@@ -246,8 +276,7 @@ def _load_dataset(zf, entry):
         ica_fd, ica_tmp_path = tempfile.mkstemp(suffix="_ica.fif", prefix="mnelab_")
         os.close(ica_fd)
         try:
-            with zf.open(entry["ica_path"]) as src, open(ica_tmp_path, "wb") as dst:
-                shutil.copyfileobj(src, dst)
+            _read_compressed(zf, entry["ica_path"], ica_tmp_path)
             ica = mne.preprocessing.read_ica(ica_tmp_path)
         finally:
             Path(ica_tmp_path).unlink(missing_ok=True)

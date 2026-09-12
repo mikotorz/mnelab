@@ -7,6 +7,7 @@ import zipfile
 import mne
 import numpy as np
 import pytest
+import zstandard as zstd
 from mne.preprocessing import ICA
 from PySide6.QtWidgets import QMessageBox
 
@@ -218,13 +219,13 @@ def test_dirty_flag_transitions(tmp_path):
 def test_format_version_guard(tmp_path):
     """Loading a project with an unsupported format version raises."""
     bad_path = tmp_path / "bad.mnelabproj"
+    json_bytes = (
+        b'{"format_version": 999, "index": -1, "next_id": 1, '
+        b'"history": [], "datasets": []}'
+    )
     with zipfile.ZipFile(bad_path, "w") as zf:
-        zf.writestr(
-            "project.json",
-            '{"format_version": 999, "index": -1, "next_id": 1, '
-            '"history": [], "datasets": []}',
-        )
-    with pytest.raises(ProjectFormatError):
+        zf.writestr("project.json", zstd.ZstdCompressor().compress(json_bytes))
+    with pytest.raises(ProjectFormatError, match="format version"):
         project.load_project(bad_path)
 
 
