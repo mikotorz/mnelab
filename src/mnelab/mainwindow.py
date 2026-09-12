@@ -1514,10 +1514,17 @@ class MainWindow(QMainWindow):
                 alpha = dialog.alpha.value()
 
             calc = CalcDialog(self, "Calculating ERDS maps", "Calculating ERDS maps...")
+            error = {}
 
             def callback(x):
                 QMetaObject.invokeMethod(
                     calc, "accept", Qt.ConnectionType.QueuedConnection
+                )
+
+            def error_callback(exc):
+                error["exception"] = exc
+                QMetaObject.invokeMethod(
+                    calc, "reject", Qt.ConnectionType.QueuedConnection
                 )
 
             pool = mp.Pool(processes=1)
@@ -1525,12 +1532,18 @@ class MainWindow(QMainWindow):
                 func=_calc_tfr,
                 args=(data, freqs, baseline, times, alpha),
                 callback=callback,
+                error_callback=error_callback,
             )
             pool.close()
 
             if not calc.exec():
                 pool.terminate()
-                print("ERDS map calculation aborted.")
+                if "exception" in error:
+                    QMessageBox.critical(
+                        self, "ERDS map calculation failed", str(error["exception"])
+                    )
+                else:
+                    print("ERDS map calculation aborted.")
             else:
                 tfr_and_masks = res.get(timeout=1)
                 figs = plot_erds(tfr_and_masks)
@@ -1650,9 +1663,13 @@ class MainWindow(QMainWindow):
             if dialog.ortho.isEnabled():
                 fit_params["ortho"] = dialog.ortho.isChecked()
 
-            self._fit_ica(method, n_components, fit_params, exclude_bad_segments)
+            decim = dialog.decim.value() if dialog.decimate.isChecked() else None
 
-    def _fit_ica(self, method, n_components, fit_params, exclude_bad_segments):
+            self._fit_ica(method, n_components, fit_params, exclude_bad_segments, decim)
+
+    def _fit_ica(
+        self, method, n_components, fit_params, exclude_bad_segments, decim=None
+    ):
         """Fit an ICA solution on the current data set.
 
         Returns
@@ -1676,27 +1693,39 @@ class MainWindow(QMainWindow):
         self.model.history.append(history)
 
         pool = mp.Pool(processes=1)
+        error = {}
 
         def callback(x):
             QMetaObject.invokeMethod(calc, "accept", Qt.ConnectionType.QueuedConnection)
 
+        def error_callback(exc):
+            error["exception"] = exc
+            QMetaObject.invokeMethod(calc, "reject", Qt.ConnectionType.QueuedConnection)
+
         res = pool.apply_async(
             func=ica.fit,
             args=(self.model.current["data"],),
-            kwds={"reject_by_annotation": exclude_bad_segments},
+            kwds={"reject_by_annotation": exclude_bad_segments, "decim": decim},
             callback=callback,
+            error_callback=error_callback,
         )
         pool.close()
 
         if not calc.exec():
             pool.terminate()
-            print("ICA calculation aborted...")
+            if "exception" in error:
+                QMessageBox.critical(
+                    self, "ICA calculation failed", str(error["exception"])
+                )
+            else:
+                print("ICA calculation aborted...")
             return False
         else:
             self.model.current["ica"] = res.get(timeout=1)
             self.model.current["iclabel"] = None
             self.model.history.append(
-                f"ica.fit(inst=raw, reject_by_annotation={exclude_bad_segments})"
+                "ica.fit(inst=raw, "
+                f"reject_by_annotation={exclude_bad_segments}, decim={decim})"
             )
             self.data_changed()
             return True

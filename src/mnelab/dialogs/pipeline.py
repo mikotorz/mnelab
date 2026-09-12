@@ -660,11 +660,13 @@ class _PipelineStageWidget(QWidget):
             fit_params["extended"] = dialog.extended.isChecked()
         if dialog.ortho.isEnabled():
             fit_params["ortho"] = dialog.ortho.isChecked()
+        decim = dialog.decim.value() if dialog.decimate.isChecked() else None
         params = {
             "method": method,
             "n_components": n_components,
             "fit_params": fit_params,
             "exclude_bad_segments": exclude_bad_segments,
+            "decim": decim,
         }
         label = f"Run ICA: {method}, {n_components} components"
         self._append_step(PipelineStep("run_ica", label, params))

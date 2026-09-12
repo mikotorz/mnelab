@@ -86,6 +86,23 @@ class RunICADialog(QDialog):
         grid.addWidget(exclude_bad_segments_label, 4, 0)
         grid.addWidget(self.exclude_bad_segments, 4, 1)
 
+        self.decimate = QCheckBox("Decimate:")
+        self.decimate.setChecked(False)
+        self.decim = FlatSpinBox()
+        self.decim.setRange(2, 100)
+        self.decim.setValue(2)
+        self.decim.setAlignment(Qt.AlignmentFlag.AlignRight)
+        self.decim.setEnabled(False)
+        set_tooltip(
+            "Use only every Nth sample when fitting ICA, which speeds up "
+            "calculation at the cost of using less data",
+            self.decimate,
+            self.decim,
+        )
+        grid.addWidget(self.decimate, 5, 0)
+        grid.addWidget(self.decim, 5, 1)
+        self.decimate.toggled.connect(self.decim.setEnabled)
+
         vbox.addLayout(grid)
 
         if highpass > 0:
