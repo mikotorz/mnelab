@@ -232,6 +232,35 @@ def plot_erds_topomaps(epochs, events, freqs, baseline, times):
     return figs
 
 
+def _stabilize_joint_figure(fig):
+    """
+    Prevent an `evoked.plot_joint` figure from re-flowing itself on later redraws.
+
+    The figure uses matplotlib's constrained layout, and its colorbar has its own box
+    aspect; both keep re-solving axes positions on every redraw (visibly squeezing the
+    figure) whenever the butterfly plot's interactive topomap selection triggers one.
+    Let the figure's first real draw settle into its correct layout, then pin every axes
+    there.
+    """
+
+    def _freeze(event):
+        fig.canvas.mpl_disconnect(cid)
+        fig.set_layout_engine("none")
+        for ax in fig.axes:
+            if ax.get_label() == "<colorbar>":
+                ax.set_box_aspect(None)
+        positions = {ax: ax.get_position().frozen() for ax in fig.axes}
+
+        def _reapply(event):
+            for ax, pos in positions.items():
+                if ax.get_position().bounds != pos.bounds:
+                    ax.set_position(pos)
+
+        fig.canvas.mpl_connect("draw_event", _reapply)
+
+    cid = fig.canvas.mpl_connect("draw_event", _freeze)
+
+
 def plot_evoked(
     epochs,
     picks,
@@ -283,15 +312,8 @@ def plot_evoked(
                     "gfp": gfp,
                 },
             )
-            # freeze the constrained layout MNE computes for the joint figure, and the
-            # colorbar's box aspect, otherwise both get re-solved (and visibly squeezed)
-            # on every redraw triggered by the butterfly plot's interactive topomap
-            # selection
             for f in fig if isinstance(fig, list) else [fig]:
-                f.set_layout_engine("none")
-                for ax in f.axes:
-                    if ax.get_label() == "<colorbar>":
-                        ax.set_box_aspect(None)
+                _stabilize_joint_figure(f)
             figs.append(fig)
         else:
             figs.append(
