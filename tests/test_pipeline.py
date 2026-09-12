@@ -2,6 +2,8 @@
 #
 # License: BSD (3-clause)
 
+from types import SimpleNamespace
+
 import mne
 import numpy as np
 import pytest
@@ -9,9 +11,12 @@ from edfio import Edf, EdfSignal
 from PySide6.QtCore import Qt
 
 from mnelab.dialogs.crop import CropDialog
+from mnelab.dialogs.drop_bad_epochs import DropBadEpochsDialog
 from mnelab.dialogs.filter import FilterDialog
 from mnelab.dialogs.montage import MontageDialog
 from mnelab.dialogs.pipeline import PipelineDialog, PipelineStep
+from mnelab.dialogs.reference import ReferenceDialog
+from mnelab.dialogs.remove_line_noise import RemoveLineNoiseDialog
 from mnelab.dialogs.rename_channels import RenameChannelsDialog
 from mnelab.dialogs.resample import ResampleDialog
 from mnelab.mainwindow import MainWindow
@@ -459,3 +464,300 @@ def test_run_pipeline_stops_after_failing_step(qtbot, model_with_data, monkeypat
     # the first crop step was applied, the invalid second crop stopped the pipeline
     assert data.times[-1] == pytest.approx(10.0, abs=0.05)
     assert data.info["sfreq"] == pytest.approx(256.0)
+
+
+def test_add_interpolate_bads_step(qtbot, model_with_data):
+    """Adding an interpolate-bads step requires no configuration."""
+    dialog = PipelineDialog(None, model_with_data)
+    qtbot.addWidget(dialog)
+
+    dialog._add_interpolate_bads_step()
+
+    assert len(dialog.steps) == 1
+    step = dialog.steps[0]
+    assert step.kind == "interpolate_bads"
+    assert step.params == {}
+
+
+def test_interpolate_bads_availability(qtbot, model_with_cz, monkeypatch):
+    """Interpolate Bad Channels becomes available once locations and bad channels
+    are queued, even though the original dataset has neither."""
+
+    def fake_montage_exec(self):
+        for i in range(self.montages.count()):
+            if self.montages.item(i).name == "spherical_1020":
+                self.montages.setCurrentRow(i)
+                break
+        self.accept()
+        return True
+
+    monkeypatch.setattr(MontageDialog, "exec", fake_montage_exec)
+    dialog = PipelineDialog(None, model_with_cz)
+    qtbot.addWidget(dialog)
+
+    assert dialog._available_interpolate_bads() is False
+    assert _step_availability(dialog)["interpolate_bads"] is False
+
+    dialog._add_montage_step()
+    assert dialog._available_interpolate_bads() is False  # no bad channels queued yet
+
+    dialog._append_step(
+        PipelineStep(
+            "bads", "Mark Bad Channels: Cz", {"bads": ["Cz"], "names": {}, "types": {}}
+        )
+    )
+
+    assert dialog._available_interpolate_bads() is True
+    assert _step_availability(dialog)["interpolate_bads"] is True
+
+
+def test_add_reference_step(qtbot, model_with_data, monkeypatch):
+    """Adding a Change Reference step records the dialog's configured choice."""
+
+    def fake_exec(self):
+        self.reref_group.setChecked(True)
+        self.reref_average.setChecked(True)
+        return True
+
+    monkeypatch.setattr(ReferenceDialog, "exec", fake_exec)
+    dialog = PipelineDialog(None, model_with_data)
+    qtbot.addWidget(dialog)
+
+    dialog._add_reference_step()
+
+    assert len(dialog.steps) == 1
+    step = dialog.steps[0]
+    assert step.kind == "reference"
+    assert step.params == {"add": [], "ref": "average"}
+
+
+def test_add_remove_line_noise_step(qtbot, model_with_data, monkeypatch):
+    """Adding a Remove Line Noise step records the dialog's configured parameters."""
+
+    def fake_exec(self):
+        self._line_frequency.setValue(60.0)
+        self.include_harmonics.setChecked(False)
+        return True
+
+    monkeypatch.setattr(RemoveLineNoiseDialog, "exec", fake_exec)
+    dialog = PipelineDialog(None, model_with_data)
+    qtbot.addWidget(dialog)
+
+    dialog._add_remove_line_noise_step()
+
+    assert len(dialog.steps) == 1
+    step = dialog.steps[0]
+    assert step.kind == "remove_line_noise"
+    assert step.params == {"line_freq": 60.0, "include_harmonics": False}
+
+
+def test_remove_line_noise_unavailable_after_epoch_data_queued(qtbot, model_with_data):
+    """Remove Line Noise is raw-only, so it is gated off once epoching is queued."""
+    dialog = PipelineDialog(None, model_with_data)
+    qtbot.addWidget(dialog)
+
+    assert dialog._available_remove_line_noise() is True
+
+    dialog._append_step(
+        PipelineStep("epoch_data", "Create Epochs: 1 event type(s)", {})
+    )
+
+    assert dialog._available_remove_line_noise() is False
+    assert _step_availability(dialog)["remove_line_noise"] is False
+
+
+def test_add_epoch_data_step(qtbot, model_with_annotated_data, monkeypatch):
+    """Adding a Create Epochs step records the dialog's configured parameters."""
+
+    class FakeEpochDialog:
+        def __init__(self, parent, event_types):
+            self.tmin = SimpleNamespace(value=lambda: -0.2)
+            self.tmax = SimpleNamespace(value=lambda: 0.2)
+            self.baseline = SimpleNamespace(isChecked=lambda: False)
+            self.selected_events = [1]
+
+        def exec(self):
+            return True
+
+    monkeypatch.setattr("mnelab.dialogs.pipeline.EpochDialog", FakeEpochDialog)
+    dialog = PipelineDialog(None, model_with_annotated_data)
+    qtbot.addWidget(dialog)
+
+    dialog._add_epoch_data_step()
+
+    assert len(dialog.steps) == 1
+    step = dialog.steps[0]
+    assert step.kind == "epoch_data"
+    assert step.params == {
+        "event_id": [1],
+        "tmin": -0.2,
+        "tmax": 0.2,
+        "baseline": None,
+    }
+
+
+def test_epoch_data_availability_and_dtype_flip(qtbot, model_with_annotated_data):
+    """Create Epochs becomes available once events-from-annotations is queued, and
+    queuing Create Epochs itself flips availability of later, dtype-sensitive steps."""
+    dialog = PipelineDialog(None, model_with_annotated_data)
+    qtbot.addWidget(dialog)
+
+    assert dialog._available_epoch_data() is False  # no events yet
+
+    dialog._append_step(
+        PipelineStep("events_from_annotations", "Events from Annotations", {})
+    )
+    assert dialog._available_epoch_data() is True
+
+    dialog._append_step(
+        PipelineStep("epoch_data", "Create Epochs: 1 event type(s)", {})
+    )
+
+    assert dialog._effective_dtype() == "epochs"
+    assert dialog._available_crop() is False
+    assert dialog._available_remove_line_noise() is False
+    assert dialog._available_events_from_annotations() is False
+    assert dialog._available_resample() is True
+    assert dialog._available_drop_bad_epochs() is True
+
+    available = _step_availability(dialog)
+    assert available["crop"] is False
+    assert available["drop_bad_epochs"] is True
+
+
+def test_add_drop_bad_epochs_step(qtbot, model_with_data, monkeypatch):
+    """Adding a Drop Bad Epochs step records the dialog's configured thresholds."""
+
+    def fake_exec(self):
+        self.reject_box.setChecked(True)
+        next(iter(self.reject_fields.values())).setText("100e-6")
+        return True
+
+    monkeypatch.setattr(DropBadEpochsDialog, "exec", fake_exec)
+    dialog = PipelineDialog(None, model_with_data)
+    qtbot.addWidget(dialog)
+
+    dialog._add_drop_bad_epochs_step()
+
+    assert len(dialog.steps) == 1
+    step = dialog.steps[0]
+    assert step.kind == "drop_bad_epochs"
+    ch_type = dialog._effective_channel_types()[0]
+    assert step.params == {"reject": {ch_type: 100e-6}, "flat": None}
+
+
+def test_run_pipeline_interpolate_bads_step_calls_model(
+    qtbot, model_with_data, monkeypatch
+):
+    """The interpolate_bads pipeline step calls through to Model.interpolate_bads."""
+    view = MainWindow(model_with_data)
+    model_with_data.view = view
+    qtbot.addWidget(view)
+
+    calls = []
+    monkeypatch.setattr(Model, "interpolate_bads", lambda self: calls.append(True))
+
+    steps = [PipelineStep("interpolate_bads", "Interpolate Bad Channels", {})]
+
+    class FakePipelineDialog:
+        def __init__(self, parent, model):
+            self.steps = steps
+
+        def exec(self):
+            return True
+
+    monkeypatch.setattr("mnelab.mainwindow.PipelineDialog", FakePipelineDialog)
+    monkeypatch.setattr(
+        "mnelab.mainwindow.QMessageBox.critical",
+        lambda *args, **kwargs: pytest.fail("Pipeline step unexpectedly failed"),
+    )
+
+    view.run_pipeline()
+
+    assert calls == [True]
+
+
+def test_run_pipeline_reference_and_remove_line_noise_steps(
+    qtbot, model_with_data, monkeypatch
+):
+    """Reference and line-noise pipeline steps call through to the Model."""
+    view = MainWindow(model_with_data)
+    model_with_data.view = view
+    qtbot.addWidget(view)
+
+    steps = [
+        PipelineStep(
+            "reference", "Change Reference: average", {"add": [], "ref": "average"}
+        ),
+        PipelineStep(
+            "remove_line_noise",
+            "Remove Line Noise: 50 Hz",
+            {"line_freq": 50.0, "include_harmonics": True},
+        ),
+    ]
+
+    class FakePipelineDialog:
+        def __init__(self, parent, model):
+            self.steps = steps
+
+        def exec(self):
+            return True
+
+    monkeypatch.setattr("mnelab.mainwindow.PipelineDialog", FakePipelineDialog)
+    monkeypatch.setattr(
+        "mnelab.mainwindow.QMessageBox.critical",
+        lambda *args, **kwargs: pytest.fail("Pipeline step unexpectedly failed"),
+    )
+
+    view.run_pipeline()
+
+    assert model_with_data.current["reference"] == "average"
+    assert "remove_line_noise(data, 50.0, include_harmonics=True)" in (
+        model_with_data.history
+    )
+
+
+def test_run_pipeline_epoch_and_drop_bad_epochs_steps(qtbot, tmp_path, monkeypatch):
+    """A pipeline chaining events-from-annotations, epoching, and epoch rejection in
+    a single run ends up with an epochs dataset."""
+    # "BAD"-prefixed descriptions are treated by MNE as bad-segment markers and
+    # excluded from events_from_annotations, so use a real event-like description.
+    model = _load_edf_model(tmp_path, name="stim_annotated.edf")
+    model.current["data"].set_annotations(
+        mne.Annotations(onset=[1.0], duration=[0.5], description=["stimulus"])
+    )
+    view = MainWindow(model)
+    model.view = view
+    qtbot.addWidget(view)
+
+    steps = [
+        PipelineStep("events_from_annotations", "Events from Annotations", {}),
+        PipelineStep(
+            "epoch_data",
+            "Create Epochs: 1 event type(s)",
+            {"event_id": [1], "tmin": -0.2, "tmax": 0.2, "baseline": None},
+        ),
+        PipelineStep(
+            "drop_bad_epochs",
+            "Drop Bad Epochs: reject",
+            {"reject": {"eeg": 1.0}, "flat": None},
+        ),
+    ]
+
+    class FakePipelineDialog:
+        def __init__(self, parent, model):
+            self.steps = steps
+
+        def exec(self):
+            return True
+
+    monkeypatch.setattr("mnelab.mainwindow.PipelineDialog", FakePipelineDialog)
+    monkeypatch.setattr(
+        "mnelab.mainwindow.QMessageBox.critical",
+        lambda *args, **kwargs: pytest.fail("Pipeline step unexpectedly failed"),
+    )
+
+    view.run_pipeline()
+
+    assert model.current["dtype"] == "epochs"
+    assert len(model.current["data"]) == 1

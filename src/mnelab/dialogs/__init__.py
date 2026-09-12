@@ -28,7 +28,7 @@ from mnelab.dialogs.mat import MatDialog
 from mnelab.dialogs.montage import MontageDialog
 from mnelab.dialogs.npy import NpyDialog
 from mnelab.dialogs.pick_channels import PickChannelsDialog
-from mnelab.dialogs.pipeline import PipelineDialog, PipelineStep
+from mnelab.dialogs.pipeline import STEP_REGISTRY, PipelineDialog, PipelineStep
 from mnelab.dialogs.plot_evoked import (
     PlotEvokedComparisonDialog,
     PlotEvokedDialog,
