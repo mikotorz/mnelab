@@ -2,9 +2,11 @@
 #
 # License: BSD (3-clause)
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 import mne
+import numpy as np
 from mne import channel_type
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
@@ -22,23 +24,32 @@ from PySide6.QtWidgets import (
 
 from mnelab.dialogs.channel_properties import ChannelPropertiesDialog
 from mnelab.dialogs.crop import CropDialog
+from mnelab.dialogs.drop_bad_epochs import DropBadEpochsDialog
+from mnelab.dialogs.epoch import EpochDialog
 from mnelab.dialogs.filter import FilterDialog
 from mnelab.dialogs.montage import MontageDialog
+from mnelab.dialogs.reference import ReferenceDialog
+from mnelab.dialogs.remove_line_noise import RemoveLineNoiseDialog
 from mnelab.dialogs.rename_channels import RenameChannelsDialog
 from mnelab.dialogs.resample import ResampleDialog
 from mnelab.dialogs.run_ica import RunICADialog
-from mnelab.utils import have, natural_sort
+from mnelab.utils import count_locations, have, natural_sort
 
-STEP_DEFINITIONS = [
-    ("montage", "Apply Montage..."),
-    ("bads", "Mark Bad Channels..."),
-    ("rename", "Rename Channels..."),
-    ("filter", "Filter Data..."),
-    ("resample", "Resample Data..."),
-    ("crop", "Crop Data..."),
-    ("events_from_annotations", "Events from Annotations"),
-    ("run_ica", "Run ICA..."),
-]
+
+def _identity_preset(params):
+    return dict(params)
+
+
+@dataclass
+class StepSpec:
+    """Everything the pipeline dialog and executor need to know about a step kind."""
+
+    label: str
+    available: Callable[["PipelineDialog"], bool]
+    add: Callable[["PipelineDialog"], None]
+    run: Callable[["MainWindow"], None]  # noqa: F821
+    to_preset: Callable[[dict], dict] = _identity_preset
+    from_preset: Callable[[dict], dict] = _identity_preset
 
 
 @dataclass
@@ -50,6 +61,67 @@ class PipelineStep:
     params: dict = field(default_factory=dict)
 
 
+def _run_montage_step(view, params):
+    view.model.set_montage(**params)
+
+
+def _run_bads_step(view, params):
+    view.model.set_channel_properties(**params)
+
+
+def _run_rename_step(view, params):
+    view.model.rename_channels(**params)
+
+
+def _run_interpolate_bads_step(view, params):
+    view.model.interpolate_bads()
+
+
+def _run_reference_step(view, params):
+    view.model.change_reference(**params)
+
+
+def _run_remove_line_noise_step(view, params):
+    view.model.remove_line_noise(**params)
+
+
+def _run_filter_step(view, params):
+    view.model.filter(**params)
+
+
+def _run_resample_step(view, params):
+    view.model.resample(**params)
+
+
+def _run_crop_step(view, params):
+    view.model.crop(**params)
+
+
+def _run_events_from_annotations_step(view, params):
+    view.model.events_from_annotations()
+
+
+def _run_epoch_data_step(view, params):
+    view.model.epoch_data(**params)
+
+
+def _run_drop_bad_epochs_step(view, params):
+    view.model.drop_bad_epochs(**params)
+
+
+def _run_run_ica_step(view, params):
+    view._fit_ica(**params)
+
+
+def _reject_fields_to_dict(fields):
+    """Turn a mapping of channel type to `QLineEdit` into a threshold dict."""
+    result = {}
+    for channel_type_name, field_widget in fields.items():
+        if field_widget.text():
+            result[channel_type_name] = float(field_widget.text())
+    return result
+
+
 class PipelineDialog(QDialog):
     """Build an ordered sequence of preprocessing steps to run in one go."""
 
@@ -59,6 +131,7 @@ class PipelineDialog(QDialog):
         self.resize(560, 420)
 
         data = model.current["data"]
+        self._data = data
         self._info = data.info
         self._ch_names = data.info["ch_names"]
         self._dtype = model.current["dtype"]
@@ -78,10 +151,10 @@ class PipelineDialog(QDialog):
         available_vbox = QVBoxLayout()
         available_vbox.addWidget(QLabel("Available Steps"))
         self.available_list = QListWidget()
-        for kind, label in STEP_DEFINITIONS:
-            item = QListWidgetItem(label)
+        for kind, spec in STEP_REGISTRY.items():
+            item = QListWidgetItem(spec.label)
             item.setData(Qt.ItemDataRole.UserRole, kind)
-            if not self._is_step_available(kind):
+            if not spec.available(self):
                 item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEnabled)
             self.available_list.addItem(item)
         self.available_list.itemDoubleClicked.connect(self._add_selected_step)
@@ -126,14 +199,7 @@ class PipelineDialog(QDialog):
 
         self.setFocus()
 
-    def _is_step_available(self, kind):
-        if kind == "resample":
-            return self._dtype in ("raw", "epochs")
-        if kind == "crop":
-            return self._dtype == "raw"
-        if kind == "events_from_annotations":
-            return self._dtype == "raw" and self._annot
-        return True
+    # -- effective state (reflects steps already queued, not yet applied) ----------
 
     def _effective_info(self):
         """Return channel info as it will be once queued steps have run."""
@@ -167,27 +233,100 @@ class PipelineDialog(QDialog):
                     highpass = max(highpass, lower)
         return highpass
 
+    def _effective_dtype(self):
+        """Return the data type ("raw" or "epochs") as it will be once queued steps
+        have run."""
+        if any(step.kind == "epoch_data" for step in self.steps):
+            return "epochs"
+        return self._dtype
+
+    def _effective_has_events(self):
+        """Return whether events will be available once queued steps have run."""
+        if self._events is not None and len(self._events):
+            return True
+        return any(step.kind == "events_from_annotations" for step in self.steps)
+
+    def _effective_event_types(self):
+        """Return the event type labels available once queued steps have run."""
+        if self._events is not None and len(self._events):
+            return np.unique(self._events[:, 2]).astype(str).tolist()
+        if any(step.kind == "events_from_annotations" for step in self.steps):
+            events, _ = mne.events_from_annotations(self._data)
+            return np.unique(events[:, 2]).astype(str).tolist()
+        return []
+
+    def _effective_channel_types(self):
+        """Return the channel types present once queued steps have run."""
+        info = self._effective_info()
+        return sorted({channel_type(info, i) for i in range(info["nchan"])})
+
+    def _effective_has_locations(self):
+        """Return whether channel positions will be set once queued steps have run."""
+        for step in reversed(self.steps):
+            if step.kind == "montage":
+                return step.params.get("montage") is not None
+        return bool(count_locations(self._info) > 0)
+
+    # -- availability ---------------------------------------------------------------
+
+    def _available_montage(self):
+        return True
+
+    def _available_bads(self):
+        return True
+
+    def _available_interpolate_bads(self):
+        return self._effective_has_locations() and bool(self._effective_info()["bads"])
+
+    def _available_rename(self):
+        return True
+
+    def _available_reference(self):
+        return True
+
+    def _available_remove_line_noise(self):
+        return self._effective_dtype() == "raw"
+
+    def _available_filter(self):
+        return True
+
+    def _available_resample(self):
+        return self._effective_dtype() in ("raw", "epochs")
+
+    def _available_crop(self):
+        return self._effective_dtype() == "raw"
+
+    def _available_events_from_annotations(self):
+        return self._effective_dtype() == "raw" and self._annot
+
+    def _available_epoch_data(self):
+        return self._effective_dtype() == "raw" and self._effective_has_events()
+
+    def _available_drop_bad_epochs(self):
+        return self._effective_dtype() == "epochs" and self._effective_has_events()
+
+    def _available_run_ica(self):
+        return True
+
+    def _refresh_available_list(self):
+        """Re-evaluate which available steps are enabled given the queued steps."""
+        for i in range(self.available_list.count()):
+            item = self.available_list.item(i)
+            kind = item.data(Qt.ItemDataRole.UserRole)
+            flags = item.flags()
+            if STEP_REGISTRY[kind].available(self):
+                item.setFlags(flags | Qt.ItemFlag.ItemIsEnabled)
+            else:
+                item.setFlags(flags & ~Qt.ItemFlag.ItemIsEnabled)
+
+    # -- adding steps -----------------------------------------------------------
+
     def _add_selected_step(self):
         item = self.available_list.currentItem()
         if item is None or not (item.flags() & Qt.ItemFlag.ItemIsEnabled):
             return
         kind = item.data(Qt.ItemDataRole.UserRole)
-        if kind == "montage":
-            self._add_montage_step()
-        elif kind == "bads":
-            self._add_bads_step()
-        elif kind == "rename":
-            self._add_rename_step()
-        elif kind == "filter":
-            self._add_filter_step()
-        elif kind == "resample":
-            self._add_resample_step()
-        elif kind == "crop":
-            self._add_crop_step()
-        elif kind == "events_from_annotations":
-            self._add_events_from_annotations_step()
-        elif kind == "run_ica":
-            self._add_run_ica_step()
+        STEP_REGISTRY[kind].add(self)
 
     def _add_montage_step(self):
         montages = natural_sort(mne.channels.get_builtin_montages())
@@ -243,6 +382,11 @@ class PipelineDialog(QDialog):
         params = {"bads": bads, "names": renamed, "types": types}
         self._append_step(PipelineStep("bads", label, params))
 
+    def _add_interpolate_bads_step(self):
+        self._append_step(
+            PipelineStep("interpolate_bads", "Interpolate Bad Channels", {})
+        )
+
     def _add_rename_step(self):
         ch_names = self._effective_ch_names()
         dialog = RenameChannelsDialog(self, ch_names)
@@ -257,6 +401,42 @@ class PipelineDialog(QDialog):
         label = f"Rename Channels: {dialog.history_mapping}"
         self._append_step(PipelineStep("rename", label, params))
 
+    def _add_reference_step(self):
+        dialog = ReferenceDialog(self, self._effective_ch_names())
+        if not dialog.exec():
+            return
+        if dialog.add_group.isChecked():
+            add = [c.strip() for c in dialog.add_channellist.text().split(",")]
+        else:
+            add = []
+        if dialog.reref_group.isChecked():
+            if dialog.reref_average.isChecked():
+                ref = "average"
+            else:
+                ref = [c.text() for c in dialog.reref_channellist.selectedItems()]
+        else:
+            ref = None
+        parts = []
+        if add:
+            parts.append(f"add {', '.join(add)}")
+        if ref == "average":
+            parts.append("average")
+        elif ref:
+            parts.append(", ".join(ref))
+        label = f"Change Reference: {'; '.join(parts) if parts else 'none'}"
+        self._append_step(PipelineStep("reference", label, {"add": add, "ref": ref}))
+
+    def _add_remove_line_noise_step(self):
+        dialog = RemoveLineNoiseDialog(self, self._sfreq)
+        if not dialog.exec():
+            return
+        params = {
+            "line_freq": dialog.line_frequency,
+            "include_harmonics": dialog.include_harmonics.isChecked(),
+        }
+        label = f"Remove Line Noise: {dialog.line_frequency:g} Hz"
+        self._append_step(PipelineStep("remove_line_noise", label, params))
+
     def _add_filter_step(self):
         dialog = FilterDialog(self)
         if not dialog.exec():
@@ -264,13 +444,13 @@ class PipelineDialog(QDialog):
         params = {"lower": dialog.lower, "upper": dialog.upper, "notch": dialog.notch}
         parts = []
         if dialog.lower is not None and dialog.upper is not None:
-            parts.append(f"{dialog.lower:g}-{dialog.upper:g} Hz")
+            parts.append(f"{dialog.lower:g}-{dialog.upper:g} Hz")
         elif dialog.lower is not None:
-            parts.append(f">{dialog.lower:g} Hz")
+            parts.append(f">{dialog.lower:g} Hz")
         elif dialog.upper is not None:
-            parts.append(f"<{dialog.upper:g} Hz")
+            parts.append(f"<{dialog.upper:g} Hz")
         if dialog.notch is not None:
-            parts.append(f"notch {dialog.notch:g} Hz")
+            parts.append(f"notch {dialog.notch:g} Hz")
         label = f"Filter Data: {', '.join(parts)}"
         self._append_step(PipelineStep("filter", label, params))
 
@@ -278,7 +458,7 @@ class PipelineDialog(QDialog):
         dialog = ResampleDialog(self, self._sfreq)
         if not dialog.exec():
             return
-        label = f"Resample Data: {dialog.new_sfreq:g} Hz"
+        label = f"Resample Data: {dialog.new_sfreq:g} Hz"
         self._append_step(PipelineStep("resample", label, {"sfreq": dialog.new_sfreq}))
 
     def _add_crop_step(self):
@@ -295,12 +475,55 @@ class PipelineDialog(QDialog):
             return
         start = max(dialog.start, 0) if dialog.start is not None else 0
         end = min(dialog.stop, stop) if dialog.stop is not None else stop
-        label = f"Crop Data: {start:g}-{end:g} s"
+        label = f"Crop Data: {start:g}-{end:g} s"
         self._append_step(PipelineStep("crop", label, {"start": start, "stop": end}))
 
     def _add_events_from_annotations_step(self):
         self._append_step(
             PipelineStep("events_from_annotations", "Events from Annotations", {})
+        )
+
+    def _add_epoch_data_step(self):
+        event_types = self._effective_event_types()
+        dialog = EpochDialog(self, event_types)
+        if not dialog.exec():
+            return
+        tmin = dialog.tmin.value()
+        tmax = dialog.tmax.value()
+        if dialog.baseline.isChecked():
+            baseline = (dialog.a.value(), dialog.b.value())
+        else:
+            baseline = None
+        params = {
+            "event_id": dialog.selected_events,
+            "tmin": tmin,
+            "tmax": tmax,
+            "baseline": baseline,
+        }
+        label = f"Create Epochs: {len(dialog.selected_events)} event type(s)"
+        self._append_step(PipelineStep("epoch_data", label, params))
+
+    def _add_drop_bad_epochs_step(self):
+        types = self._effective_channel_types()
+        dialog = DropBadEpochsDialog(self, types)
+        if not dialog.exec():
+            return
+        reject = None
+        flat = None
+        if dialog.reject_box.isChecked():
+            reject = _reject_fields_to_dict(dialog.reject_fields)
+        if dialog.flat_box.isChecked():
+            flat = _reject_fields_to_dict(dialog.flat_fields)
+        if reject is None and flat is None:
+            return
+        parts = []
+        if reject:
+            parts.append("reject")
+        if flat:
+            parts.append("flat")
+        label = f"Drop Bad Epochs: {', '.join(parts) if parts else 'none'}"
+        self._append_step(
+            PipelineStep("drop_bad_epochs", label, {"reject": reject, "flat": flat})
         )
 
     def _add_run_ica_step(self):
@@ -329,10 +552,13 @@ class PipelineDialog(QDialog):
         label = f"Run ICA: {method}, {n_components} components"
         self._append_step(PipelineStep("run_ica", label, params))
 
+    # -- list management --------------------------------------------------------
+
     def _append_step(self, step):
         self.steps.append(step)
         self.steps_list.addItem(QListWidgetItem(step.label))
         self.run_button.setEnabled(True)
+        self._refresh_available_list()
 
     def _move_step_up(self):
         row = self.steps_list.currentRow()
@@ -355,6 +581,7 @@ class PipelineDialog(QDialog):
         del self.steps[row]
         self._refresh_steps_list()
         self.run_button.setEnabled(bool(self.steps))
+        self._refresh_available_list()
 
     def _refresh_steps_list(self, selected_row=None):
         self.steps_list.clear()
@@ -362,3 +589,85 @@ class PipelineDialog(QDialog):
             self.steps_list.addItem(QListWidgetItem(step.label))
         if selected_row is not None and 0 <= selected_row < self.steps_list.count():
             self.steps_list.setCurrentRow(selected_row)
+
+
+STEP_REGISTRY: dict[str, StepSpec] = {
+    "montage": StepSpec(
+        "Apply Montage...",
+        PipelineDialog._available_montage,
+        PipelineDialog._add_montage_step,
+        _run_montage_step,
+    ),
+    "bads": StepSpec(
+        "Mark Bad Channels...",
+        PipelineDialog._available_bads,
+        PipelineDialog._add_bads_step,
+        _run_bads_step,
+    ),
+    "interpolate_bads": StepSpec(
+        "Interpolate Bad Channels",
+        PipelineDialog._available_interpolate_bads,
+        PipelineDialog._add_interpolate_bads_step,
+        _run_interpolate_bads_step,
+    ),
+    "rename": StepSpec(
+        "Rename Channels...",
+        PipelineDialog._available_rename,
+        PipelineDialog._add_rename_step,
+        _run_rename_step,
+    ),
+    "reference": StepSpec(
+        "Change Reference...",
+        PipelineDialog._available_reference,
+        PipelineDialog._add_reference_step,
+        _run_reference_step,
+    ),
+    "remove_line_noise": StepSpec(
+        "Remove Line Noise...",
+        PipelineDialog._available_remove_line_noise,
+        PipelineDialog._add_remove_line_noise_step,
+        _run_remove_line_noise_step,
+    ),
+    "filter": StepSpec(
+        "Filter Data...",
+        PipelineDialog._available_filter,
+        PipelineDialog._add_filter_step,
+        _run_filter_step,
+    ),
+    "resample": StepSpec(
+        "Resample Data...",
+        PipelineDialog._available_resample,
+        PipelineDialog._add_resample_step,
+        _run_resample_step,
+    ),
+    "crop": StepSpec(
+        "Crop Data...",
+        PipelineDialog._available_crop,
+        PipelineDialog._add_crop_step,
+        _run_crop_step,
+    ),
+    "events_from_annotations": StepSpec(
+        "Events from Annotations",
+        PipelineDialog._available_events_from_annotations,
+        PipelineDialog._add_events_from_annotations_step,
+        _run_events_from_annotations_step,
+    ),
+    "epoch_data": StepSpec(
+        "Create Epochs...",
+        PipelineDialog._available_epoch_data,
+        PipelineDialog._add_epoch_data_step,
+        _run_epoch_data_step,
+    ),
+    "drop_bad_epochs": StepSpec(
+        "Drop Bad Epochs...",
+        PipelineDialog._available_drop_bad_epochs,
+        PipelineDialog._add_drop_bad_epochs_step,
+        _run_drop_bad_epochs_step,
+    ),
+    "run_ica": StepSpec(
+        "Run ICA...",
+        PipelineDialog._available_run_ica,
+        PipelineDialog._add_run_ica_step,
+        _run_run_ica_step,
+    ),
+}

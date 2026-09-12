@@ -1720,22 +1720,7 @@ class MainWindow(QMainWindow):
 
     def _run_pipeline_step(self, step):
         """Apply a single configured pipeline step to the current data set."""
-        if step.kind == "montage":
-            self.model.set_montage(**step.params)
-        elif step.kind == "bads":
-            self.model.set_channel_properties(**step.params)
-        elif step.kind == "rename":
-            self.model.rename_channels(**step.params)
-        elif step.kind == "filter":
-            self.model.filter(**step.params)
-        elif step.kind == "resample":
-            self.model.resample(**step.params)
-        elif step.kind == "crop":
-            self.model.crop(**step.params)
-        elif step.kind == "events_from_annotations":
-            self.model.events_from_annotations()
-        elif step.kind == "run_ica":
-            self._fit_ica(**step.params)
+        STEP_REGISTRY[step.kind].run(self, step.params)
 
     def apply_ica(self):
         """Apply current fitted ICA."""
