@@ -14,12 +14,16 @@ if getattr(sys, "frozen", False):
 import multiprocessing as mp
 from importlib.metadata import PackageNotFoundError, version
 
+from mnelab._fork_version import FORK_BUILD
+
 try:
     __version__ = version("mnelab")
 except PackageNotFoundError:
     __version__ = "unknown"
 
 IS_DEV_VERSION = __version__.split(".")[-1].startswith("dev")
+
+__fork_version__ = f"{__version__}+mikotorz.{FORK_BUILD}"
 
 
 def main():

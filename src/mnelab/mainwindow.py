@@ -48,7 +48,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from mnelab import IS_DEV_VERSION, __version__, project
+from mnelab import IS_DEV_VERSION, __fork_version__, __version__, project
 from mnelab.dialogs import *
 from mnelab.dialogs.channel_stats import ChannelStats
 from mnelab.model import (
@@ -2015,6 +2015,7 @@ class MainWindow(QMainWindow):
         msg_box.setText(text)
 
         mnelab_url = "github.com/cbrnr/mnelab"
+        fork_url = "github.com/mikotorz/mnelab"
         mne_url = "github.com/mne-tools/mne-python"
 
         pkgs = []
@@ -2028,6 +2029,8 @@ class MainWindow(QMainWindow):
             f"<nobr><p>This program uses Python {version} and the following packages:"
             f"</p></nobr><p>{', '.join(pkgs)}</p>"
             f"<nobr><p>MNELAB repository: <a href=https://{mnelab_url}>{mnelab_url}</a>"
+            f"</p></nobr><nobr><p>mikotorz's fork repository: "
+            f"<a href=https://{fork_url}>{fork_url}</a> (build {__fork_version__})"
             f"</p></nobr><nobr><p>MNE repository: "
             f"<a href=https://{mne_url}>{mne_url}</a></p></nobr>"
             f"<p>Licensed under the BSD 3-clause license.</p>"
