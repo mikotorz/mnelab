@@ -1102,8 +1102,8 @@ docs = [
 [package.metadata]
 requires-dist = [
     { name = "autoreject", marker = "extra == 'full'", specifier = ">=0.4.3" },
-    { name = "black", specifier = ">=25.3.1" },
-    { name = "isort", specifier = ">=8.0.1" },
+    { name = "black", specifier = ">=26.5.1" },
+    { name = "isort", specifier = ">=9.0.1" },
     { name = "matplotlib", specifier = ">=3.10.8" },
     { name = "mne", specifier = ">=1.12.1,<1.13" },
     { name = "mne-qt-browser", marker = "extra == 'full'", specifier = ">=0.7.4" },
