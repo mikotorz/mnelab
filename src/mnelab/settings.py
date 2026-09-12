@@ -52,6 +52,9 @@ _DEFAULTS = {
     "duration": 20,
     "epochs": 10,
     "recent": [],
+    "recent_projects": [],
+    "autosave_enabled": True,
+    "autosave_interval": 5,
     "statusbar": True,
     "size": QSize(700, 500),
     "pos": QPoint(100, 100),
@@ -191,7 +194,7 @@ class SettingsDialog(QDialog):
             general_form,
             "Recent Files:",
             self.max_recent,
-            "Set how many recently opened files to keep in the File menu",
+            "Set how many recently opened files and projects to keep in the File menu",
         )
 
         self.dtype_badges = QCheckBox()
@@ -220,6 +223,30 @@ class SettingsDialog(QDialog):
             self.memory_saving,
             "Unload inactive datasets and reload them when selected to reduce "
             "memory use",
+        )
+
+        self.autosave_enabled = QCheckBox()
+        self.autosave_enabled.setChecked(read_settings("autosave_enabled"))
+        add_setting_row(
+            general_form,
+            "Autosave:",
+            self.autosave_enabled,
+            "Periodically save an unsaved-changes recovery snapshot in the background",
+        )
+
+        self.autosave_interval = FlatSpinBox()
+        self.autosave_interval.setRange(1, 60)
+        self.autosave_interval.setValue(read_settings("autosave_interval"))
+        self.autosave_interval.setSuffix(" min")
+        self.autosave_interval.setAlignment(Qt.AlignmentFlag.AlignRight)
+        self.autosave_interval.setFixedWidth(100)
+        self.autosave_interval.setEnabled(self.autosave_enabled.isChecked())
+        self.autosave_enabled.toggled.connect(self.autosave_interval.setEnabled)
+        add_setting_row(
+            general_form,
+            "Autosave Interval:",
+            self.autosave_interval,
+            "How often to autosave, in minutes",
         )
 
         self._stack.addWidget(general_page)
@@ -438,15 +465,22 @@ class SettingsDialog(QDialog):
             duration=self.duration.value(),
             epochs=self.epochs.value(),
             recent=self.parent().recent,
+            recent_projects=self.parent().recent_projects,
             plot_backend=self.plot_backend.currentText(),
             dtype_badges=self.dtype_badges.isChecked(),
             menu_icons=self.menu_icons.isChecked(),
             memory_saving=self.memory_saving.isChecked(),
+            autosave_enabled=self.autosave_enabled.isChecked(),
+            autosave_interval=self.autosave_interval.value(),
             scalings=self.scalings.currentText().lower(),
             toolbar_actions=toolbar_keys,
         )
         self.parent().recent = self.parent().recent[: read_settings("max_recent")]
+        self.parent().recent_projects = self.parent().recent_projects[
+            : read_settings("max_recent")
+        ]
         self.parent()._apply_toolbar(toolbar_keys)
+        self.parent()._apply_autosave_settings()
         self.accept()
 
     @Slot()
@@ -458,6 +492,8 @@ class SettingsDialog(QDialog):
         self.dtype_badges.setChecked(_DEFAULTS["dtype_badges"])
         self.menu_icons.setChecked(_DEFAULTS["menu_icons"])
         self.memory_saving.setChecked(_DEFAULTS["memory_saving"])
+        self.autosave_enabled.setChecked(_DEFAULTS["autosave_enabled"])
+        self.autosave_interval.setValue(_DEFAULTS["autosave_interval"])
         self.plot_backend.setCurrentIndex(
             self.plot_backend.findText(_DEFAULTS["plot_backend"])
         )
@@ -465,9 +501,11 @@ class SettingsDialog(QDialog):
         self.parent().resize(_DEFAULTS["size"])
         self.parent().move(_DEFAULTS["pos"])
         self.parent().recent = []
+        self.parent().recent_projects = []
         self.parent()._set_splitter_ratio(_DEFAULTS["splitter"])
         self._reset_toolbar_page()
         self.parent()._apply_toolbar(_DEFAULTS["toolbar_actions"])
+        self.parent()._apply_autosave_settings()
         clear_settings()
 
     def _populate_toolbar_page(self, current_keys):

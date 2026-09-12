@@ -11,6 +11,7 @@ same format and style as `CHANGELOG.md`, but with PR links pointing to this fork
 
 ## [UNRELEASED]
 ### ✨ Added
+- Add Save/Open Project (a single Zstandard-compressed `.mnelabproj` file capturing every open dataset, montage, events, ICA, and the session's command history), with an unsaved-changes prompt on quit and periodic autosave with crash recovery on next launch ([#8](https://github.com/mikotorz/mnelab/pull/8) by [mikotorz](https://github.com/mikotorz))
 - Add a Pipeline action to chain multiple preprocessing steps (Apply Montage, Mark Bad Channels, Filter, Resample, Crop, Events from Annotations, Run ICA) into a single run ([#2](https://github.com/mikotorz/mnelab/pull/2) by [mikotorz](https://github.com/mikotorz))
 - Add Rename Channels as a Pipeline step ([#3](https://github.com/mikotorz/mnelab/pull/3) by [mikotorz](https://github.com/mikotorz))
 - Add a "From Event Range" mode to Crop Data that crops to the first/last occurrence of a selected event type (or all events), with adjustable padding before/after ([#7](https://github.com/mikotorz/mnelab/pull/7) by [mikotorz](https://github.com/mikotorz))

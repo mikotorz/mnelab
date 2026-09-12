@@ -23,6 +23,7 @@ from mnextend import (
 )
 from mnextend.io.readers import raw_readers
 
+from mnelab import project
 from mnelab.utils import Montage, count_locations
 from mnelab.utils.marker_history import annotations_history, events_history
 
@@ -49,6 +50,7 @@ def data_changed(_func=None, *, invalidate_cache=True):
     def decorator(f):
         @wraps(f)
         def wrapper(self, *args, **kwargs):
+            self.dirty = True
             if invalidate_cache and self.current is not None:
                 self._invalidate_cache()
             if self.view is not None:
@@ -75,6 +77,8 @@ class Model:
         self._next_id = 1  # monotonically increasing dataset ID counter
         self._temp_files = set()  # paths of temporary .fif cache files
         self.log = []  # captured MNE log messages
+        self.project_path = None  # path of the .mnelabproj file last saved to/loaded
+        self.dirty = False  # True if there are unsaved changes
         self.history = [
             "from copy import deepcopy",
             "import mne",
@@ -1056,3 +1060,62 @@ class Model:
         for path in list(self._temp_files):
             Path(path).unlink(missing_ok=True)
         self._temp_files.clear()
+
+    @data_changed(invalidate_cache=False)
+    def save_project(self, fname):
+        """Save the entire session (all data sets and history) to a project file."""
+        project.save_project(self, fname)
+        self.project_path = str(fname)
+        self.dirty = False
+
+    @data_changed(invalidate_cache=False)
+    def load_project(self, fname, merge=False):
+        """Load a project file, replacing or merging into the current session.
+
+        Parameters
+        ----------
+        fname : str | Path
+            Path to the `.mnelabproj` file to load.
+        merge : bool
+            If `False` (default), the current session is discarded and replaced
+            with the project's data sets. If `True`, the project's data sets are
+            appended to the current session, with `id`/`parent_id` renumbered to
+            avoid collisions.
+        """
+        loaded = project.load_project(fname)
+        if not merge:
+            self.cleanup()
+            self.data = loaded.datasets
+            self.index = loaded.index
+            self._next_id = loaded.next_id
+            self.history[:] = loaded.history
+            self._temp_files = {
+                d["_cache_path"] for d in loaded.datasets if d["_cache_path"]
+            }
+            self.project_path = str(fname)
+            self.dirty = False
+        else:
+            id_map = {}
+            next_id = self._next_id
+            for d in loaded.datasets:
+                id_map[d["id"]] = next_id
+                d["id"] = next_id
+                next_id += 1
+            for d in loaded.datasets:
+                if d["parent_id"] is not None:
+                    d["parent_id"] = id_map[d["parent_id"]]
+            old_len = len(self.data)
+            self.data.extend(loaded.datasets)
+            self._next_id = next_id
+            if loaded.datasets:
+                self.index = old_len + loaded.index
+            self._temp_files |= {
+                d["_cache_path"] for d in loaded.datasets if d["_cache_path"]
+            }
+            self.history.append("")
+            self.history.append(f"# --- merged project: {Path(fname).name} ---")
+            for line in loaded.history:
+                self.history.append(line)
+            self.dirty = True
+            # project_path is deliberately left unchanged: a merged session no
+            # longer corresponds 1:1 to a single project file
