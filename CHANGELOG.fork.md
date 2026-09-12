@@ -16,6 +16,7 @@ same format and style as `CHANGELOG.md`, but with PR links pointing to this fork
 - Add Rename Channels as a Pipeline step ([#3](https://github.com/mikotorz/mnelab/pull/3) by [mikotorz](https://github.com/mikotorz))
 - Add a "From Event Range" mode to Crop Data that crops to the first/last occurrence of a selected event type (or all events), with adjustable padding before/after ([#7](https://github.com/mikotorz/mnelab/pull/7) by [mikotorz](https://github.com/mikotorz))
 - Add Interpolate Bad Channels, Change Reference, Remove Line Noise, Create Epochs, and Drop Bad Epochs as Pipeline steps, so a raw-to-epochs preprocessing pipeline can be built and run end to end ([#9](https://github.com/mikotorz/mnelab/pull/9) by [mikotorz](https://github.com/mikotorz))
+- Add multi-stage support to the Pipeline dialog (a tabbed "+ Add Stage" UI), so steps that only make sense after an earlier transition, such as Drop Bad Epochs after Create Epochs, are offered once that transition is queued ([#10](https://github.com/mikotorz/mnelab/pull/10) by [mikotorz](https://github.com/mikotorz))
 
 ### 🔧 Fixed
 - Fix Pipeline steps (Apply Montage, Mark Bad Channels, Rename Channels, Run ICA) validating and configuring against the original dataset instead of the state produced by earlier queued steps, which broke natural step orders like Rename Channels → Apply Montage or Filter Data → Run ICA ([#5](https://github.com/mikotorz/mnelab/pull/5) by [mikotorz](https://github.com/mikotorz))

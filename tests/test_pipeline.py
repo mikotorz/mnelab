@@ -41,10 +41,15 @@ def model_with_data(tmp_path):
 
 @pytest.fixture
 def model_with_annotated_data(tmp_path):
-    """Model with a single annotation on the loaded raw data."""
+    """Model with a single annotation on the loaded raw data.
+
+    The description is deliberately not "bad"/"edge"-prefixed: MNE's
+    `events_from_annotations` excludes those by default, so a description like
+    that would never turn into a real event.
+    """
     model = _load_edf_model(tmp_path, name="annotated.edf")
     model.current["data"].set_annotations(
-        mne.Annotations(onset=[1.0], duration=[0.5], description=["BAD"])
+        mne.Annotations(onset=[1.0], duration=[0.5], description=["stimulus"])
     )
     return model
 
@@ -73,11 +78,11 @@ def model_with_eeg_cz(tmp_path):
     return model
 
 
-def _step_availability(dialog):
+def _step_availability(stage):
     """Map each available-step kind to whether it is currently enabled."""
     available = {}
-    for i in range(dialog.available_list.count()):
-        item = dialog.available_list.item(i)
+    for i in range(stage.available_list.count()):
+        item = stage.available_list.item(i)
         kind = item.data(Qt.ItemDataRole.UserRole)
         available[kind] = bool(item.flags() & Qt.ItemFlag.ItemIsEnabled)
     return available
@@ -87,46 +92,50 @@ def test_step_availability_gating(qtbot, model_with_data, model_with_annotated_d
     """Crop/events-from-annotations are only offered when applicable."""
     dialog = PipelineDialog(None, model_with_data)
     qtbot.addWidget(dialog)
-    available = _step_availability(dialog)
+    available = _step_availability(dialog.stages[0])
     assert available["crop"] is True
     assert available["resample"] is True
     assert available["events_from_annotations"] is False
 
     annotated_dialog = PipelineDialog(None, model_with_annotated_data)
     qtbot.addWidget(annotated_dialog)
-    assert _step_availability(annotated_dialog)["events_from_annotations"] is True
+    assert (
+        _step_availability(annotated_dialog.stages[0])["events_from_annotations"]
+        is True
+    )
 
 
 def test_step_list_management(qtbot, model_with_data):
     """Steps can be appended, reordered, and removed."""
     dialog = PipelineDialog(None, model_with_data)
     qtbot.addWidget(dialog)
+    stage = dialog.stages[0]
 
     assert not dialog.run_button.isEnabled()
 
-    dialog._append_step(PipelineStep("filter", "Filter Data: <30 Hz", {}))
-    dialog._append_step(PipelineStep("crop", "Crop Data: 0-10 s", {}))
+    stage._append_step(PipelineStep("filter", "Filter Data: <30 Hz", {}))
+    stage._append_step(PipelineStep("crop", "Crop Data: 0-10 s", {}))
     assert [s.kind for s in dialog.steps] == ["filter", "crop"]
     assert dialog.run_button.isEnabled()
 
-    dialog.steps_list.setCurrentRow(1)
-    dialog._move_step_up()
+    stage.steps_list.setCurrentRow(1)
+    stage._move_step_up()
     assert [s.kind for s in dialog.steps] == ["crop", "filter"]
-    assert [dialog.steps_list.item(i).text() for i in range(2)] == [
+    assert [stage.steps_list.item(i).text() for i in range(2)] == [
         "Crop Data: 0-10 s",
         "Filter Data: <30 Hz",
     ]
 
-    dialog.steps_list.setCurrentRow(0)
-    dialog._move_step_down()
+    stage.steps_list.setCurrentRow(0)
+    stage._move_step_down()
     assert [s.kind for s in dialog.steps] == ["filter", "crop"]
 
-    dialog.steps_list.setCurrentRow(0)
-    dialog._remove_step()
+    stage.steps_list.setCurrentRow(0)
+    stage._remove_step()
     assert [s.kind for s in dialog.steps] == ["crop"]
 
-    dialog.steps_list.setCurrentRow(0)
-    dialog._remove_step()
+    stage.steps_list.setCurrentRow(0)
+    stage._remove_step()
     assert dialog.steps == []
     assert not dialog.run_button.isEnabled()
 
@@ -144,7 +153,7 @@ def test_add_rename_step(qtbot, model_with_data, monkeypatch):
     dialog = PipelineDialog(None, model_with_data)
     qtbot.addWidget(dialog)
 
-    dialog._add_rename_step()
+    dialog.stages[0]._add_rename_step()
 
     assert len(dialog.steps) == 1
     step = dialog.steps[0]
@@ -159,7 +168,7 @@ def test_add_rename_step_noop_not_added(qtbot, model_with_data, monkeypatch):
     dialog = PipelineDialog(None, model_with_data)
     qtbot.addWidget(dialog)
 
-    dialog._add_rename_step()
+    dialog.stages[0]._add_rename_step()
 
     assert dialog.steps == []
 
@@ -170,7 +179,7 @@ def test_add_filter_step(qtbot, model_with_data, monkeypatch):
     dialog = PipelineDialog(None, model_with_data)
     qtbot.addWidget(dialog)
 
-    dialog._add_filter_step()
+    dialog.stages[0]._add_filter_step()
 
     assert len(dialog.steps) == 1
     step = dialog.steps[0]
@@ -184,7 +193,7 @@ def test_add_resample_step(qtbot, model_with_data, monkeypatch):
     dialog = PipelineDialog(None, model_with_data)
     qtbot.addWidget(dialog)
 
-    dialog._add_resample_step()
+    dialog.stages[0]._add_resample_step()
 
     assert len(dialog.steps) == 1
     step = dialog.steps[0]
@@ -197,9 +206,9 @@ def test_add_crop_step(qtbot, model_with_data, monkeypatch):
     monkeypatch.setattr(CropDialog, "exec", lambda self: True)
     dialog = PipelineDialog(None, model_with_data)
     qtbot.addWidget(dialog)
-    stop = dialog._times[-1]
+    stop = dialog.stages[0]._context.times[-1]
 
-    dialog._add_crop_step()
+    dialog.stages[0]._add_crop_step()
 
     assert len(dialog.steps) == 1
     step = dialog.steps[0]
@@ -212,7 +221,7 @@ def test_add_events_from_annotations_step(qtbot, model_with_annotated_data):
     dialog = PipelineDialog(None, model_with_annotated_data)
     qtbot.addWidget(dialog)
 
-    dialog._add_events_from_annotations_step()
+    dialog.stages[0]._add_events_from_annotations_step()
 
     assert len(dialog.steps) == 1
     step = dialog.steps[0]
@@ -235,7 +244,7 @@ def test_add_montage_step_success(qtbot, model_with_cz, monkeypatch):
     dialog = PipelineDialog(None, model_with_cz)
     qtbot.addWidget(dialog)
 
-    dialog._add_montage_step()
+    dialog.stages[0]._add_montage_step()
 
     assert len(dialog.steps) == 1
     step = dialog.steps[0]
@@ -263,7 +272,7 @@ def test_add_montage_step_no_match(qtbot, model_with_data, monkeypatch):
     dialog = PipelineDialog(None, model_with_data)
     qtbot.addWidget(dialog)
 
-    dialog._add_montage_step()
+    dialog.stages[0]._add_montage_step()
 
     assert dialog.steps == []
     assert len(critical_calls) == 1
@@ -290,13 +299,14 @@ def test_add_montage_step_after_rename_step(qtbot, model_with_eeg_cz, monkeypatc
     monkeypatch.setattr(MontageDialog, "exec", fake_montage_exec)
     dialog = PipelineDialog(None, model_with_eeg_cz)
     qtbot.addWidget(dialog)
+    stage = dialog.stages[0]
 
-    dialog._add_rename_step()
+    stage._add_rename_step()
     assert [s.kind for s in dialog.steps] == ["rename"]
 
     # without taking the queued rename step into account, "EEG Cz" would not
     # match any spherical_1020 channel name and this would be wrongly rejected
-    dialog._add_montage_step()
+    stage._add_montage_step()
 
     assert [s.kind for s in dialog.steps] == ["rename", "montage"]
     assert dialog.steps[-1].params["montage"].name == "spherical_1020"
@@ -314,8 +324,9 @@ def test_add_bads_step_after_rename_step(qtbot, model_with_data, monkeypatch):
     monkeypatch.setattr(RenameChannelsDialog, "exec", fake_rename_exec)
     dialog = PipelineDialog(None, model_with_data)
     qtbot.addWidget(dialog)
+    stage = dialog.stages[0]
 
-    dialog._add_rename_step()
+    stage._add_rename_step()
     assert dialog.steps[-1].params["mapping"]("EEG") == "EG"
 
     seen_labels = []
@@ -327,7 +338,7 @@ def test_add_bads_step_after_rename_step(qtbot, model_with_data, monkeypatch):
     monkeypatch.setattr(
         "mnelab.dialogs.pipeline.ChannelPropertiesDialog.exec", fake_bads_exec
     )
-    dialog._add_bads_step()
+    stage._add_bads_step()
 
     assert seen_labels == ["EG"]
 
@@ -355,10 +366,11 @@ def test_run_ica_step_uses_effective_highpass(qtbot, model_with_data, monkeypatc
     monkeypatch.setattr("mnelab.dialogs.pipeline.RunICADialog", FakeRunICADialog)
     dialog = PipelineDialog(None, model_with_data)
     qtbot.addWidget(dialog)
-    assert dialog._effective_highpass() == 0
+    stage = dialog.stages[0]
+    assert stage._effective_highpass() == 0
 
-    dialog._add_filter_step()
-    dialog._add_run_ica_step()
+    stage._add_filter_step()
+    stage._add_run_ica_step()
 
     assert recorded["highpass"] == pytest.approx(2.0)
 
@@ -471,7 +483,7 @@ def test_add_interpolate_bads_step(qtbot, model_with_data):
     dialog = PipelineDialog(None, model_with_data)
     qtbot.addWidget(dialog)
 
-    dialog._add_interpolate_bads_step()
+    dialog.stages[0]._add_interpolate_bads_step()
 
     assert len(dialog.steps) == 1
     step = dialog.steps[0]
@@ -494,21 +506,22 @@ def test_interpolate_bads_availability(qtbot, model_with_cz, monkeypatch):
     monkeypatch.setattr(MontageDialog, "exec", fake_montage_exec)
     dialog = PipelineDialog(None, model_with_cz)
     qtbot.addWidget(dialog)
+    stage = dialog.stages[0]
 
-    assert dialog._available_interpolate_bads() is False
-    assert _step_availability(dialog)["interpolate_bads"] is False
+    assert stage._available_interpolate_bads() is False
+    assert _step_availability(stage)["interpolate_bads"] is False
 
-    dialog._add_montage_step()
-    assert dialog._available_interpolate_bads() is False  # no bad channels queued yet
+    stage._add_montage_step()
+    assert stage._available_interpolate_bads() is False  # no bad channels queued yet
 
-    dialog._append_step(
+    stage._append_step(
         PipelineStep(
             "bads", "Mark Bad Channels: Cz", {"bads": ["Cz"], "names": {}, "types": {}}
         )
     )
 
-    assert dialog._available_interpolate_bads() is True
-    assert _step_availability(dialog)["interpolate_bads"] is True
+    assert stage._available_interpolate_bads() is True
+    assert _step_availability(stage)["interpolate_bads"] is True
 
 
 def test_add_reference_step(qtbot, model_with_data, monkeypatch):
@@ -523,7 +536,7 @@ def test_add_reference_step(qtbot, model_with_data, monkeypatch):
     dialog = PipelineDialog(None, model_with_data)
     qtbot.addWidget(dialog)
 
-    dialog._add_reference_step()
+    dialog.stages[0]._add_reference_step()
 
     assert len(dialog.steps) == 1
     step = dialog.steps[0]
@@ -543,7 +556,7 @@ def test_add_remove_line_noise_step(qtbot, model_with_data, monkeypatch):
     dialog = PipelineDialog(None, model_with_data)
     qtbot.addWidget(dialog)
 
-    dialog._add_remove_line_noise_step()
+    dialog.stages[0]._add_remove_line_noise_step()
 
     assert len(dialog.steps) == 1
     step = dialog.steps[0]
@@ -555,15 +568,14 @@ def test_remove_line_noise_unavailable_after_epoch_data_queued(qtbot, model_with
     """Remove Line Noise is raw-only, so it is gated off once epoching is queued."""
     dialog = PipelineDialog(None, model_with_data)
     qtbot.addWidget(dialog)
+    stage = dialog.stages[0]
 
-    assert dialog._available_remove_line_noise() is True
+    assert stage._available_remove_line_noise() is True
 
-    dialog._append_step(
-        PipelineStep("epoch_data", "Create Epochs: 1 event type(s)", {})
-    )
+    stage._append_step(PipelineStep("epoch_data", "Create Epochs: 1 event type(s)", {}))
 
-    assert dialog._available_remove_line_noise() is False
-    assert _step_availability(dialog)["remove_line_noise"] is False
+    assert stage._available_remove_line_noise() is False
+    assert _step_availability(stage)["remove_line_noise"] is False
 
 
 def test_add_epoch_data_step(qtbot, model_with_annotated_data, monkeypatch):
@@ -583,7 +595,7 @@ def test_add_epoch_data_step(qtbot, model_with_annotated_data, monkeypatch):
     dialog = PipelineDialog(None, model_with_annotated_data)
     qtbot.addWidget(dialog)
 
-    dialog._add_epoch_data_step()
+    dialog.stages[0]._add_epoch_data_step()
 
     assert len(dialog.steps) == 1
     step = dialog.steps[0]
@@ -601,26 +613,25 @@ def test_epoch_data_availability_and_dtype_flip(qtbot, model_with_annotated_data
     queuing Create Epochs itself flips availability of later, dtype-sensitive steps."""
     dialog = PipelineDialog(None, model_with_annotated_data)
     qtbot.addWidget(dialog)
+    stage = dialog.stages[0]
 
-    assert dialog._available_epoch_data() is False  # no events yet
+    assert stage._available_epoch_data() is False  # no events yet
 
-    dialog._append_step(
+    stage._append_step(
         PipelineStep("events_from_annotations", "Events from Annotations", {})
     )
-    assert dialog._available_epoch_data() is True
+    assert stage._available_epoch_data() is True
 
-    dialog._append_step(
-        PipelineStep("epoch_data", "Create Epochs: 1 event type(s)", {})
-    )
+    stage._append_step(PipelineStep("epoch_data", "Create Epochs: 1 event type(s)", {}))
 
-    assert dialog._effective_dtype() == "epochs"
-    assert dialog._available_crop() is False
-    assert dialog._available_remove_line_noise() is False
-    assert dialog._available_events_from_annotations() is False
-    assert dialog._available_resample() is True
-    assert dialog._available_drop_bad_epochs() is True
+    assert stage._effective_dtype() == "epochs"
+    assert stage._available_crop() is False
+    assert stage._available_remove_line_noise() is False
+    assert stage._available_events_from_annotations() is False
+    assert stage._available_resample() is True
+    assert stage._available_drop_bad_epochs() is True
 
-    available = _step_availability(dialog)
+    available = _step_availability(stage)
     assert available["crop"] is False
     assert available["drop_bad_epochs"] is True
 
@@ -636,13 +647,14 @@ def test_add_drop_bad_epochs_step(qtbot, model_with_data, monkeypatch):
     monkeypatch.setattr(DropBadEpochsDialog, "exec", fake_exec)
     dialog = PipelineDialog(None, model_with_data)
     qtbot.addWidget(dialog)
+    stage = dialog.stages[0]
 
-    dialog._add_drop_bad_epochs_step()
+    stage._add_drop_bad_epochs_step()
 
     assert len(dialog.steps) == 1
     step = dialog.steps[0]
     assert step.kind == "drop_bad_epochs"
-    ch_type = dialog._effective_channel_types()[0]
+    ch_type = stage._effective_channel_types()[0]
     assert step.params == {"reject": {ch_type: 100e-6}, "flat": None}
 
 
@@ -717,15 +729,12 @@ def test_run_pipeline_reference_and_remove_line_noise_steps(
     )
 
 
-def test_run_pipeline_epoch_and_drop_bad_epochs_steps(qtbot, tmp_path, monkeypatch):
+def test_run_pipeline_epoch_and_drop_bad_epochs_steps(
+    qtbot, model_with_annotated_data, monkeypatch
+):
     """A pipeline chaining events-from-annotations, epoching, and epoch rejection in
     a single run ends up with an epochs dataset."""
-    # "BAD"-prefixed descriptions are treated by MNE as bad-segment markers and
-    # excluded from events_from_annotations, so use a real event-like description.
-    model = _load_edf_model(tmp_path, name="stim_annotated.edf")
-    model.current["data"].set_annotations(
-        mne.Annotations(onset=[1.0], duration=[0.5], description=["stimulus"])
-    )
+    model = model_with_annotated_data
     view = MainWindow(model)
     model.view = view
     qtbot.addWidget(view)
@@ -761,3 +770,133 @@ def test_run_pipeline_epoch_and_drop_bad_epochs_steps(qtbot, tmp_path, monkeypat
 
     assert model.current["dtype"] == "epochs"
     assert len(model.current["data"]) == 1
+
+
+# -- multi-stage pipelines ------------------------------------------------------
+
+
+def test_new_dialog_has_exactly_one_stage(qtbot, model_with_data):
+    """A freshly opened Pipeline dialog starts with a single stage."""
+    dialog = PipelineDialog(None, model_with_data)
+    qtbot.addWidget(dialog)
+
+    assert len(dialog.stages) == 1
+    assert dialog.tabs.count() == 1
+    assert dialog.tabs.tabText(0) == "Stage 1"
+    assert not dialog.remove_stage_button.isEnabled()
+
+
+def test_add_and_remove_stage(qtbot, model_with_data):
+    """Stages can be added and removed, but at least one must remain."""
+    dialog = PipelineDialog(None, model_with_data)
+    qtbot.addWidget(dialog)
+
+    dialog._add_stage()
+
+    assert len(dialog.stages) == 2
+    assert dialog.tabs.count() == 2
+    assert dialog.tabs.tabText(1) == "Stage 2"
+    assert dialog.remove_stage_button.isEnabled()
+
+    dialog.tabs.setCurrentIndex(1)
+    dialog._remove_stage()
+
+    assert len(dialog.stages) == 1
+    assert dialog.tabs.count() == 1
+    assert not dialog.remove_stage_button.isEnabled()
+
+    # removing the last remaining stage is a no-op
+    dialog._remove_stage()
+    assert len(dialog.stages) == 1
+
+
+def test_epoch_data_in_one_stage_gates_later_stage(
+    qtbot, model_with_annotated_data, monkeypatch
+):
+    """Once a stage queues Create Epochs, that stage and every later one start
+    seeing an epochs data type: Drop Bad Epochs becomes available, and raw-only
+    steps are gated off -- in the stage that queued Create Epochs and beyond."""
+
+    class FakeEpochDialog:
+        def __init__(self, parent, event_types):
+            self.tmin = SimpleNamespace(value=lambda: -0.2)
+            self.tmax = SimpleNamespace(value=lambda: 0.2)
+            self.baseline = SimpleNamespace(isChecked=lambda: False)
+            self.selected_events = [1]
+
+        def exec(self):
+            return True
+
+    monkeypatch.setattr("mnelab.dialogs.pipeline.EpochDialog", FakeEpochDialog)
+    dialog = PipelineDialog(None, model_with_annotated_data)
+    qtbot.addWidget(dialog)
+    stage1 = dialog.stages[0]
+
+    stage1._append_step(
+        PipelineStep("events_from_annotations", "Events from Annotations", {})
+    )
+    stage1._add_epoch_data_step()
+    assert [s.kind for s in stage1.steps] == ["events_from_annotations", "epoch_data"]
+
+    # stage 1 itself already offers Drop Bad Epochs, since Create Epochs was
+    # queued within it
+    assert stage1._available_drop_bad_epochs() is True
+
+    dialog._add_stage()
+    stage2 = dialog.stages[1]
+
+    assert stage2._context.dtype == "epochs"
+    assert stage2._available_drop_bad_epochs() is True
+    assert stage2._available_crop() is False
+    assert stage2._available_remove_line_noise() is False
+
+    available2 = _step_availability(stage2)
+    assert available2["drop_bad_epochs"] is True
+    assert available2["crop"] is False
+
+
+def test_stage_context_resyncs_when_earlier_stage_changes(
+    qtbot, model_with_annotated_data
+):
+    """Removing an epoching step from an earlier stage un-gates Drop Bad Epochs in a
+    later stage that was already built on top of it."""
+    dialog = PipelineDialog(None, model_with_annotated_data)
+    qtbot.addWidget(dialog)
+    stage1 = dialog.stages[0]
+
+    stage1._append_step(
+        PipelineStep("events_from_annotations", "Events from Annotations", {})
+    )
+    stage1._append_step(
+        PipelineStep("epoch_data", "Create Epochs: 1 event type(s)", {})
+    )
+
+    dialog._add_stage()
+    stage2 = dialog.stages[1]
+    assert stage2._context.dtype == "epochs"
+    assert stage2._available_drop_bad_epochs() is True
+
+    # remove the epoching step from stage 1
+    stage1.steps_list.setCurrentRow(1)
+    stage1._remove_step()
+
+    assert stage2._context.dtype == "raw"
+    assert stage2._available_drop_bad_epochs() is False
+    assert stage2._available_crop() is True
+
+
+def test_dialog_steps_flattens_stages_in_order(qtbot, model_with_data):
+    """`dialog.steps` is every stage's steps, concatenated in stage order."""
+    dialog = PipelineDialog(None, model_with_data)
+    qtbot.addWidget(dialog)
+    stage1 = dialog.stages[0]
+
+    stage1._append_step(PipelineStep("filter", "Filter Data: <30 Hz", {}))
+
+    dialog._add_stage()
+    stage2 = dialog.stages[1]
+    stage2._append_step(
+        PipelineStep("resample", "Resample Data: 128 Hz", {"sfreq": 128.0})
+    )
+
+    assert [s.kind for s in dialog.steps] == ["filter", "resample"]
