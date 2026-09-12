@@ -21,6 +21,36 @@ from mnelab.dialogs.utils import set_header_alignments
 from mnelab.widgets import FlatDoubleSpinBox
 
 
+def build_rename_mapping(
+    method, begin_strip_chars, end_strip_chars, begin_slice_num, end_slice_num
+):
+    """Build a channel-renaming function and its history-code representation.
+
+    Used by `RenameChannelsDialog` itself and by the Pipeline preset loader, which
+    reconstructs a queued Rename Channels step's mapping without a live dialog.
+    """
+    if method == "Strip characters":
+
+        def mapping(name):
+            return name.lstrip(begin_strip_chars).rstrip(end_strip_chars)
+
+        history_mapping = (
+            f"lambda name: name.lstrip({begin_strip_chars!r})"
+            f".rstrip({end_strip_chars!r})"
+        )
+    else:
+        begin_slice_num = int(begin_slice_num)
+        end_slice_num = int(end_slice_num)
+
+        def mapping(name):
+            return name[begin_slice_num : len(name) - end_slice_num]
+
+        history_mapping = (
+            f"lambda name: name[{begin_slice_num}:len(name) - {end_slice_num}]"
+        )
+    return mapping, history_mapping
+
+
 class RenameChannelsDialog(QDialog):
     def __init__(self, parent, channels):
         super().__init__(parent)
@@ -112,26 +142,24 @@ class RenameChannelsDialog(QDialog):
     @property
     def mapping(self):
         """Return the selected channel renaming function."""
-        if self.method.currentText() == "Strip characters":
-            begin_chars = self.begin_strip_chars.text()
-            end_chars = self.end_strip_chars.text()
-            return lambda name: name.lstrip(begin_chars).rstrip(end_chars)
-
-        begin_num = int(self.begin_slice_num.value())
-        end_num = int(self.end_slice_num.value())
-        return lambda name: name[begin_num : len(name) - end_num]
+        return build_rename_mapping(
+            self.method.currentText(),
+            self.begin_strip_chars.text(),
+            self.end_strip_chars.text(),
+            self.begin_slice_num.value(),
+            self.end_slice_num.value(),
+        )[0]
 
     @property
     def history_mapping(self):
         """Return the selected channel renaming function as history code."""
-        if self.method.currentText() == "Strip characters":
-            begin_chars = self.begin_strip_chars.text()
-            end_chars = self.end_strip_chars.text()
-            return f"lambda name: name.lstrip({begin_chars!r}).rstrip({end_chars!r})"
-
-        begin_num = int(self.begin_slice_num.value())
-        end_num = int(self.end_slice_num.value())
-        return f"lambda name: name[{begin_num}:len(name) - {end_num}]"
+        return build_rename_mapping(
+            self.method.currentText(),
+            self.begin_strip_chars.text(),
+            self.end_strip_chars.text(),
+            self.begin_slice_num.value(),
+            self.end_slice_num.value(),
+        )[1]
 
     @Slot()
     def toggle_input(self):

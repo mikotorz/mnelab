@@ -4,15 +4,18 @@
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from pathlib import Path
 
 import mne
 import numpy as np
 from mne import channel_type
+from mne.channels import make_standard_montage, read_custom_montage
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QDialog,
     QDialogButtonBox,
+    QFileDialog,
     QHBoxLayout,
     QLabel,
     QListWidget,
@@ -32,14 +35,83 @@ from mnelab.dialogs.filter import FilterDialog
 from mnelab.dialogs.montage import MontageDialog
 from mnelab.dialogs.reference import ReferenceDialog
 from mnelab.dialogs.remove_line_noise import RemoveLineNoiseDialog
-from mnelab.dialogs.rename_channels import RenameChannelsDialog
+from mnelab.dialogs.rename_channels import RenameChannelsDialog, build_rename_mapping
 from mnelab.dialogs.resample import ResampleDialog
 from mnelab.dialogs.run_ica import RunICADialog
-from mnelab.utils import count_locations, have, natural_sort
+from mnelab.utils import Montage, count_locations, have, natural_sort
+
+
+class PipelinePresetFormatError(Exception):
+    """Raised when a file is not a valid/supported MNELAB pipeline preset file, or
+    when a queued step cannot be represented in one."""
 
 
 def _identity_preset(params):
     return dict(params)
+
+
+def _montage_to_preset(params):
+    montage = params.get("montage")
+    if montage is None:
+        return {"montage": None}
+    if montage.embedded:
+        raise PipelinePresetFormatError(
+            "Cannot save a preset containing an Apply Montage step that uses a"
+            " montage embedded in a specific recording's own digitization."
+            " Reconfigure that step with a standard or custom montage first."
+        )
+    return {
+        "montage": {
+            "name": montage.name,
+            "path": str(montage.path) if montage.path else None,
+        },
+        "match_case": params["match_case"],
+        "match_alias": params["match_alias"],
+        "on_missing": params["on_missing"],
+    }
+
+
+def _montage_from_preset(data):
+    montage_meta = data.get("montage")
+    if montage_meta is None:
+        return {"montage": None}
+    name = montage_meta["name"]
+    path = montage_meta["path"]
+    if path is not None:
+        if not Path(path).exists():
+            raise PipelinePresetFormatError(
+                f"Custom montage file '{path}' no longer exists."
+            )
+        montage_obj = read_custom_montage(path)
+    else:
+        montage_obj = make_standard_montage(name)
+    return {
+        "montage": Montage(montage_obj, name, Path(path) if path else None, False),
+        "match_case": data["match_case"],
+        "match_alias": data["match_alias"],
+        "on_missing": data["on_missing"],
+    }
+
+
+def _rename_to_preset(params):
+    return {
+        "method": params["method"],
+        "begin_strip_chars": params["begin_strip_chars"],
+        "end_strip_chars": params["end_strip_chars"],
+        "begin_slice_num": params["begin_slice_num"],
+        "end_slice_num": params["end_slice_num"],
+    }
+
+
+def _rename_from_preset(data):
+    mapping, history_mapping = build_rename_mapping(
+        data["method"],
+        data["begin_strip_chars"],
+        data["end_strip_chars"],
+        data["begin_slice_num"],
+        data["end_slice_num"],
+    )
+    return {**data, "mapping": mapping, "history_mapping": history_mapping}
 
 
 @dataclass
@@ -435,6 +507,11 @@ class _PipelineStageWidget(QWidget):
         params = {
             "mapping": dialog.mapping,
             "history_mapping": dialog.history_mapping,
+            "method": dialog.method.currentText(),
+            "begin_strip_chars": dialog.begin_strip_chars.text(),
+            "end_strip_chars": dialog.end_strip_chars.text(),
+            "begin_slice_num": int(dialog.begin_slice_num.value()),
+            "end_slice_num": int(dialog.end_slice_num.value()),
         }
         label = f"Rename Channels: {dialog.history_mapping}"
         self._append_step(PipelineStep("rename", label, params))
@@ -682,6 +759,18 @@ class PipelineDialog(QDialog):
         stage_controls.addWidget(self.add_stage_button)
         stage_controls.addWidget(self.remove_stage_button)
         stage_controls.addStretch()
+        self.save_preset_button = QPushButton("Save Preset...")
+        self.save_preset_button.setToolTip(
+            "Save every stage's queued steps to a file, to reuse on future data"
+        )
+        self.save_preset_button.clicked.connect(self._save_preset)
+        self.load_preset_button = QPushButton("Load Preset...")
+        self.load_preset_button.setToolTip(
+            "Replace the stages above with ones loaded from a saved preset file"
+        )
+        self.load_preset_button.clicked.connect(self._load_preset)
+        stage_controls.addWidget(self.save_preset_button)
+        stage_controls.addWidget(self.load_preset_button)
         vbox.addLayout(stage_controls)
 
         self.buttonbox = QDialogButtonBox(
@@ -742,6 +831,80 @@ class PipelineDialog(QDialog):
             stage.set_context(context)
             context = stage.ending_context()
 
+    def _save_preset(self):
+        # imported lazily to avoid a circular import (pipeline_preset.py imports
+        # STEP_REGISTRY/PipelineStep/PipelinePresetFormatError from this module)
+        from mnelab.pipeline_preset import save_pipeline_preset
+
+        fname, _ = QFileDialog.getSaveFileName(
+            self, "Save Pipeline Preset", "", "Pipeline Preset (*.json)"
+        )
+        if not fname:
+            return
+        if not fname.endswith(".json"):
+            fname += ".json"
+        stages_data = [
+            (self.tabs.tabText(i), stage.steps) for i, stage in enumerate(self.stages)
+        ]
+        try:
+            save_pipeline_preset(stages_data, fname)
+        except PipelinePresetFormatError as e:
+            QMessageBox.critical(self, "Could not save pipeline preset", str(e))
+
+    def _load_preset(self):
+        from mnelab.pipeline_preset import load_pipeline_preset
+
+        fname, _ = QFileDialog.getOpenFileName(
+            self, "Load Pipeline Preset", "", "Pipeline Preset (*.json)"
+        )
+        if not fname:
+            return
+        try:
+            stages_data, skipped = load_pipeline_preset(fname)
+        except PipelinePresetFormatError as e:
+            QMessageBox.critical(self, "Could not load pipeline preset", str(e))
+            return
+
+        while self.tabs.count():
+            old_widget = self.tabs.widget(0)
+            self.tabs.removeTab(0)
+            old_widget.deleteLater()
+        self.stages = []
+
+        context = self._initial_context
+        for name, steps in stages_data:
+            stage = _PipelineStageWidget(self, context)
+            self.stages.append(stage)
+            self.tabs.addTab(stage, name)
+            for step in steps:
+                spec = STEP_REGISTRY.get(step.kind)
+                if spec is None or not spec.available(stage):
+                    skipped.append(f"{step.label} (not applicable to this dataset)")
+                    continue
+                montage = step.params.get("montage") if step.kind == "montage" else None
+                if montage is not None and not (
+                    set(stage._effective_ch_names()) & set(montage.montage.ch_names)
+                ):
+                    skipped.append(f"{step.label} (no matching channel names)")
+                    continue
+                stage._append_step(step)
+            context = stage.ending_context()
+
+        if not self.stages:
+            self._add_stage()
+        else:
+            self.tabs.setCurrentIndex(0)
+            self.remove_stage_button.setEnabled(len(self.stages) > 1)
+        self.run_button.setEnabled(bool(self.steps))
+
+        if skipped:
+            QMessageBox.warning(
+                self,
+                "Some steps were skipped",
+                "The following steps from this preset could not be restored:\n\n"
+                + "\n".join(f"- {s}" for s in skipped),
+            )
+
 
 STEP_REGISTRY: dict[str, StepSpec] = {
     "montage": StepSpec(
@@ -749,6 +912,8 @@ STEP_REGISTRY: dict[str, StepSpec] = {
         _PipelineStageWidget._available_montage,
         _PipelineStageWidget._add_montage_step,
         _run_montage_step,
+        to_preset=_montage_to_preset,
+        from_preset=_montage_from_preset,
     ),
     "bads": StepSpec(
         "Mark Bad Channels...",
@@ -767,6 +932,8 @@ STEP_REGISTRY: dict[str, StepSpec] = {
         _PipelineStageWidget._available_rename,
         _PipelineStageWidget._add_rename_step,
         _run_rename_step,
+        to_preset=_rename_to_preset,
+        from_preset=_rename_from_preset,
     ),
     "reference": StepSpec(
         "Change Reference...",
