@@ -42,9 +42,13 @@ _ICON_MAP = {
     "Reference": "change-reference",
 }
 
-dev_label = (
-    '<p align="right"><font color="red"><small>Development Version</small></font></p>'
-)
+
+def _dev_label(version):
+    return (
+        '<p align="right"><font color="purple"><small>'
+        f"mikotorz's fork based on Development Version {version} (upstream)"
+        "</small></font></p>"
+    )
 
 
 def _make_shortcuts_table(actions):
@@ -107,7 +111,7 @@ class InfoWidget(QWidget):
     reference_clicked = Signal()
 
     def __init__(self, values=None):
-        from mnelab import IS_DEV_VERSION
+        from mnelab import IS_DEV_VERSION, __version__
 
         super().__init__()
         QApplication.instance().installEventFilter(self)
@@ -126,7 +130,7 @@ class InfoWidget(QWidget):
         self.set_values(values)
         if IS_DEV_VERSION:
             vbox.addStretch()
-            vbox.addWidget(QLabel(dev_label))
+            vbox.addWidget(QLabel(_dev_label(__version__)))
 
     def set_values(self, values=None):
         """Set values (and overwrite existing values).
@@ -266,7 +270,7 @@ class InfoWidget(QWidget):
 
 class EmptyWidget(QWidget):
     def __init__(self, actions):
-        from mnelab import IS_DEV_VERSION
+        from mnelab import IS_DEV_VERSION, __version__
 
         super().__init__()
         self._actions = actions
@@ -276,7 +280,7 @@ class EmptyWidget(QWidget):
         vbox.addWidget(self._label)
         vbox.addStretch()
         if IS_DEV_VERSION:
-            vbox.addWidget(QLabel(dev_label))
+            vbox.addWidget(QLabel(_dev_label(__version__)))
 
     def changeEvent(self, event):
         if event.type() == QEvent.Type.PaletteChange:

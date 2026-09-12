@@ -56,6 +56,11 @@ Every PR you open on this fork must include an entry in the `[UNRELEASED]` secti
 - Add support for XYZ ([#123](https://github.com/mikotorz/mnelab/pull/123) by [Your Name](https://github.com/yourname))
 ```
 
+Bump `FORK_BUILD` by 1 in `src/mnelab/_fork_version.py` in the same PR as any
+`CHANGELOG.fork.md` entry. This is the fork's own build counter, independent of
+`pyproject.toml`'s `version` field (see [Release](#release)); it is surfaced in the
+About dialog as part of `__fork_version__`.
+
 ## Commit messages
 
 - Use the imperative mood and start with a capital letter (e.g., `Fix crash when loading XDF files`).
