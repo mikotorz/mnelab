@@ -462,3 +462,31 @@ def test_duplicate_does_not_share_parent_cache(model_two_datasets):
 
     model.reload_dataset(child_index)
     assert model.data[child_index]["data"] is not None
+
+
+def test_remove_data_resets_project_path_when_empty(model_two_datasets):
+    """Removing the last data set clears `project_path` (issue #19)."""
+    model = model_two_datasets
+    model.project_path = "/tmp/project.mnelabproj"
+
+    model.remove_data(0)
+    assert model.project_path == "/tmp/project.mnelabproj"  # one data set remains
+
+    model.remove_data(0)
+    assert len(model) == 0
+    assert model.project_path is None
+
+
+def test_remove_data_cascade_resets_project_path_when_empty(model_two_datasets):
+    """Cascading a delete down to zero data sets clears `project_path` (issue #19)."""
+    model = model_two_datasets
+    model.project_path = "/tmp/project.mnelabproj"
+
+    # both loaded data sets are independent (no parent/child relation), so cascading
+    # from either one removes only that data set
+    model.remove_data_cascade(model.data[0]["id"])
+    assert model.project_path == "/tmp/project.mnelabproj"
+
+    model.remove_data_cascade(model.data[0]["id"])
+    assert len(model) == 0
+    assert model.project_path is None
