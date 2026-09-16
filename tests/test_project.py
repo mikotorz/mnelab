@@ -298,3 +298,42 @@ def test_autosave_recovery_restore(qtbot, tmp_path, model_with_data, monkeypatch
 
     assert model2.data == []
     assert not recovery_path.is_file()
+
+
+def test_autosave_after_close_all_does_not_overwrite_old_project(
+    qtbot, tmp_path, model_with_data, monkeypatch
+):
+    """Closing all data sets clears `project_path`, so autosave started while working on
+    a new, unrelated session can't silently clobber the previously-saved project file
+    (issue #19)."""
+    recovery_path = tmp_path / "recovery.mnelabproj"
+    monkeypatch.setattr(project, "RECOVERY_PATH", str(recovery_path))
+
+    model = model_with_data
+    view = MainWindow(model)
+    model.view = view
+    qtbot.addWidget(view)
+
+    a_path = tmp_path / "A.mnelabproj"
+    model.save_project(a_path)
+    a_bytes = a_path.read_bytes()
+
+    # close all data sets, mirroring MainWindow.close_all
+    while len(model) > 0:
+        model.remove_data()
+    assert model.project_path is None
+
+    # start a new, unrelated session without restarting the app
+    other_path = _make_raw_fif(tmp_path, "other", seed=1)
+    model.load(other_path)
+    assert model.dirty is True
+
+    view._autosave_tick()
+
+    assert a_path.read_bytes() == a_bytes  # the old project file must be untouched
+    assert recovery_path.is_file()  # autosave falls back to the recovery file instead
+
+    b_path = tmp_path / "B.mnelabproj"
+    model.save_project(b_path)
+    assert a_path.read_bytes() == a_bytes
+    assert b_path.is_file()

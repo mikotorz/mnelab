@@ -124,6 +124,8 @@ class Model:
 
         if self.index >= len(self.data):  # if last entry was removed
             self.index = len(self.data) - 1  # reset index to last entry
+        if not self.data:  # no data left -> no longer tied to a saved project
+            self.project_path = None
 
     @data_changed(invalidate_cache=False)
     def duplicate_data(self):
@@ -204,6 +206,8 @@ class Model:
             self.history.append(f"datasets.pop({i})")
         if self.index >= len(self.data):
             self.index = len(self.data) - 1
+        if not self.data:  # no data left -> no longer tied to a saved project
+            self.project_path = None
 
     @data_changed(invalidate_cache=False)
     def load_data(self, data, fname, name=None):

@@ -8,4 +8,4 @@
 Bump `FORK_BUILD` by 1 in the same PR that adds a `CHANGELOG.fork.md` entry.
 """
 
-FORK_BUILD = 1
+FORK_BUILD = 2
