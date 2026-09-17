@@ -27,7 +27,7 @@ from mnelab.dialogs.utils import (
     NumberSortProxyModel,
     set_header_alignments,
 )
-from mnelab.widgets import FlatDoubleSpinBox, set_tooltip
+from mnelab.widgets import FlatDoubleSpinBox, PresetBar, set_tooltip
 
 
 class PlotDetailDialog(QDialog):
@@ -76,6 +76,11 @@ class AutoSelectDialog(QDialog):
         grid.addWidget(label_header, 0, 0)
         grid.addWidget(threshold_header, 0, 2)
 
+        self._preset_defaults = {
+            label: {"enabled": label in ["Eye", "Muscle"], "threshold": 0.90}
+            for label in labels
+        }
+
         for idx, label in enumerate(labels):
             row = idx + 1
 
@@ -105,6 +110,15 @@ class AutoSelectDialog(QDialog):
 
             self.criteria[label] = checkbox, spinbox
 
+        self.preset_bar = PresetBar(
+            self,
+            "iclabel",
+            self.get_preset_values,
+            self.set_preset_values,
+            self._preset_defaults,
+        )
+        layout.addWidget(self.preset_bar)
+
         self.buttonbox = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
@@ -121,6 +135,22 @@ class AutoSelectDialog(QDialog):
             if chk.isChecked():
                 rules[label] = spin.value()
         return rules
+
+    def get_preset_values(self):
+        return {
+            label: {"enabled": chk.isChecked(), "threshold": spin.value()}
+            for label, (chk, spin) in self.criteria.items()
+        }
+
+    def set_preset_values(self, values):
+        for label, entry in values.items():
+            widgets = self.criteria.get(label)
+            if widgets is None:
+                continue
+            chk, spin = widgets
+            chk.setChecked(entry.get("enabled", False))
+            if "threshold" in entry:
+                spin.setValue(entry["threshold"])
 
 
 class ICLabelDialog(QDialog):

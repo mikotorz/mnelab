@@ -12,7 +12,16 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
-from mnelab.widgets import FlatDoubleSpinBox, set_tooltip
+from mnelab.widgets import FlatDoubleSpinBox, PresetBar, set_tooltip
+
+_PRESET_DEFAULTS = {
+    "lower_enabled": False,
+    "lower": 1.0,
+    "upper_enabled": True,
+    "upper": 30.0,
+    "notch_enabled": False,
+    "notch": 50.0,
+}
 
 
 class FilterDialog(QDialog):
@@ -85,6 +94,15 @@ class FilterDialog(QDialog):
         notch_groupbox.setLayout(notch_grid)
         vbox.addWidget(notch_groupbox)
 
+        self.preset_bar = PresetBar(
+            self,
+            "filter",
+            self.get_preset_values,
+            self.set_preset_values,
+            _PRESET_DEFAULTS,
+        )
+        vbox.addWidget(self.preset_bar)
+
         # buttons
         self.buttonbox = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
@@ -139,3 +157,22 @@ class FilterDialog(QDialog):
     @property
     def notch(self):
         return float(self.notch_edit.value()) if self.notch_check.isChecked() else None
+
+    def get_preset_values(self):
+        return {
+            "lower_enabled": self.lower_check.isChecked(),
+            "lower": self.lower_edit.value(),
+            "upper_enabled": self.upper_check.isChecked(),
+            "upper": self.upper_edit.value(),
+            "notch_enabled": self.notch_check.isChecked(),
+            "notch": self.notch_edit.value(),
+        }
+
+    def set_preset_values(self, values):
+        self.lower_check.setChecked(values["lower_enabled"])
+        self.lower_edit.setValue(values["lower"])
+        self.upper_check.setChecked(values["upper_enabled"])
+        self.upper_edit.setValue(values["upper"])
+        self.notch_check.setChecked(values["notch_enabled"])
+        self.notch_edit.setValue(values["notch"])
+        self.validate_inputs()
