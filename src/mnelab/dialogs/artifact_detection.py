@@ -34,7 +34,7 @@ from mnelab.utils import (
     find_bad_epochs_ptp,
 )
 from mnelab.utils.dependencies import have
-from mnelab.widgets import FlatDoubleSpinBox
+from mnelab.widgets import FlatDoubleSpinBox, PresetBar
 
 
 class ArtifactDetectionDialog(QDialog):
@@ -63,6 +63,17 @@ class ArtifactDetectionDialog(QDialog):
                 "parameters": [],
                 "function": find_bad_epochs_autoreject,
             }
+
+        self._preset_defaults = {
+            method: {
+                "enabled": False,
+                **{
+                    param_name: default
+                    for param_name, _, default, _, _ in details["parameters"]
+                },
+            }
+            for method, details in self.detection_methods.items()
+        }
 
         # structure: {epoch_idx: {"method_name": bool, "reject": bool}}
         self.detection_results = {}
@@ -154,6 +165,16 @@ class ArtifactDetectionDialog(QDialog):
         required_width = metrics.horizontalAdvance(max_text)
         self.info_label.setFixedWidth(required_width)
         layout.addWidget(self.info_label)
+        layout.addSpacing(3)
+
+        self.preset_bar = PresetBar(
+            self,
+            "artifact_detection",
+            self.get_preset_values,
+            self.set_preset_values,
+            self._preset_defaults,
+        )
+        layout.addWidget(self.preset_bar)
         layout.addSpacing(3)
 
         button_layout = QHBoxLayout()
@@ -295,6 +316,27 @@ class ArtifactDetectionDialog(QDialog):
             for idx, results in self.detection_results.items()
             if results.get("reject", False)
         ]
+
+    def get_preset_values(self):
+        """Return checkbox/threshold state for every detection method."""
+        values = {}
+        for method, widgets in self.method_widgets.items():
+            entry = {"enabled": widgets["checkbox"].isChecked()}
+            for param_name, param_info in widgets["inputs"].items():
+                entry[param_name] = param_info["spinbox"].value()
+            values[method] = entry
+        return values
+
+    def set_preset_values(self, values):
+        """Apply saved checkbox/threshold state, skipping unavailable methods."""
+        for method, entry in values.items():
+            widgets = self.method_widgets.get(method)
+            if widgets is None:
+                continue
+            widgets["checkbox"].setChecked(entry.get("enabled", False))
+            for param_name, param_info in widgets["inputs"].items():
+                if param_name in entry:
+                    param_info["spinbox"].setValue(entry[param_name])
 
     def get_history_code(self):
         """Generate code snippet to reproduce the artifact detection."""

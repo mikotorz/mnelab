@@ -12,7 +12,15 @@ from PySide6.QtWidgets import (
     QListWidget,
 )
 
-from mnelab.widgets import FlatDoubleSpinBox, selection_key, set_tooltip
+from mnelab.widgets import FlatDoubleSpinBox, PresetBar, selection_key, set_tooltip
+
+_PRESET_DEFAULTS = {
+    "tmin": -0.2,
+    "tmax": 0.5,
+    "baseline_enabled": True,
+    "baseline_start": -0.2,
+    "baseline_end": 0.0,
+}
 
 
 class EpochDialog(QDialog):
@@ -78,12 +86,22 @@ class EpochDialog(QDialog):
         self.b.setToolTip("Set the baseline end relative to selected events in seconds")
         grid.addWidget(self.a, 2, 1, 1, 1)
         grid.addWidget(self.b, 2, 2, 1, 1)
+
+        self.preset_bar = PresetBar(
+            self,
+            "epoch",
+            self.get_preset_values,
+            self.set_preset_values,
+            _PRESET_DEFAULTS,
+        )
+        grid.addWidget(self.preset_bar, 3, 0, 1, -1)
+
         self.buttonbox = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
         self.buttonbox.accepted.connect(self.accept)
         self.buttonbox.rejected.connect(self.reject)
-        grid.addWidget(self.buttonbox, 3, 0, 1, -1)
+        grid.addWidget(self.buttonbox, 4, 0, 1, -1)
         self.events.itemSelectionChanged.connect(self.toggle_ok)
         self.toggle_ok()
         grid.setSizeConstraint(QGridLayout.SizeConstraint.SetFixedSize)
@@ -108,3 +126,20 @@ class EpochDialog(QDialog):
     @property
     def selected_events(self):
         return [int(item.text()) for item in self.events.selectedItems()]
+
+    def get_preset_values(self):
+        return {
+            "tmin": self.tmin.value(),
+            "tmax": self.tmax.value(),
+            "baseline_enabled": self.baseline.isChecked(),
+            "baseline_start": self.a.value(),
+            "baseline_end": self.b.value(),
+        }
+
+    def set_preset_values(self, values):
+        self.tmin.setValue(values["tmin"])
+        self.tmax.setValue(values["tmax"])
+        self.baseline.setChecked(values["baseline_enabled"])
+        self.a.setValue(values["baseline_start"])
+        self.b.setValue(values["baseline_end"])
+        self.toggle_baseline()
